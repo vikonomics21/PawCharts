@@ -33,11 +33,11 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Mobile-first design that also works well on desktop.
 - Supabase project connection and initial RLS-backed schema.
 - Supabase Pets data adapter for future authenticated read/write.
+- Google OAuth sign-in, callback handling, session refresh middleware, and sign-out.
 
 ## Later
 
 - Database persistence and storage.
-- Google OAuth.
 - Real file upload and preview handling.
 - Public share pages backed by live data.
 - Stripe subscriptions and paywall behavior.

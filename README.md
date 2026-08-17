@@ -16,6 +16,7 @@ This first version is intentionally mock-data driven so the product experience c
 - Demo dog and cat profiles with species-specific fields
 - Supabase SQL migration blueprint with household roles, records, reminders, sharing, documents, and RLS policies
 - Supabase project connection with the initial schema pushed remotely
+- Google OAuth plumbing through Supabase Auth
 
 ## Run Locally
 
@@ -31,6 +32,7 @@ Open http://localhost:3000.
 - `src/data/demo.ts` - demo pets, tasks, vaccines, and care events
 - `src/lib/brand.ts` - centralized placeholder branding
 - `src/lib/supabase/` - Supabase client helpers and first persistence adapters
+- `src/app/auth/` - Google OAuth server actions and callback route
 - `public/manifest.json` - PWA manifest
 - `public/sw.js` - basic app-shell service worker
 - `supabase/migrations/0001_initial_schema.sql` - database blueprint for the future Supabase project

@@ -60,6 +60,7 @@ import {
   type VetVisit,
   type VaccineRecord,
 } from "@/data/demo";
+import { signInWithGoogle, signOut } from "@/app/auth/actions";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
@@ -204,7 +205,15 @@ const initialShareLinks: ShareLink[] = [
   },
 ];
 
-export function PawChartApp() {
+export function PawChartApp({
+  authEmail = null,
+  initialOwnerProfile,
+  isAuthenticated = false,
+}: {
+  authEmail?: string | null;
+  initialOwnerProfile?: OwnerProfile;
+  isAuthenticated?: boolean;
+}) {
   const [activeTab, setActiveTab] = useState<Tab>("home");
   const [pets, setPets] = useState<Pet[]>(demoPets);
   const [selectedPetId, setSelectedPetId] = useState(demoPets[0].id);
@@ -216,7 +225,7 @@ export function PawChartApp() {
   const [vetPrepItems, setVetPrepItems] = useState<VetPrepItem[]>(demoVetPrepItems);
   const [vetProviders, setVetProviders] = useState<VetProvider[]>(demoVetProviders);
   const [vetVisits, setVetVisits] = useState<VetVisit[]>(demoVetVisits);
-  const [ownerProfile, setOwnerProfile] = useState<OwnerProfile>(demoOwnerProfile);
+  const [ownerProfile, setOwnerProfile] = useState<OwnerProfile>(initialOwnerProfile ?? demoOwnerProfile);
   const [petAccessMembers, setPetAccessMembers] = useState<PetAccessMember[]>(initialPetAccessMembers);
   const [shareLinks, setShareLinks] = useState<ShareLink[]>(initialShareLinks);
   const [copiedShareLinkId, setCopiedShareLinkId] = useState<string | null>(null);
@@ -949,11 +958,18 @@ export function PawChartApp() {
   return (
     <main className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex min-h-dvh w-full max-w-[1440px] bg-background">
-        <DesktopSidebar activeTab={activeTab} onAdd={() => setModal({ title: "Log something", type: "global-add" })} setActiveTab={setActiveTab} />
+        <DesktopSidebar
+          activeTab={activeTab}
+          isAuthenticated={isAuthenticated}
+          onAdd={() => setModal({ title: "Log something", type: "global-add" })}
+          setActiveTab={setActiveTab}
+        />
 
         <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
           <AppHeader
             activeTab={activeTab}
+            authEmail={authEmail}
+            isAuthenticated={isAuthenticated}
             logs={logs}
             onLogForDate={handleTaskBackdate}
             onOpenOwnerProfile={() => setModal({ title: "Your info", type: "owner-profile" })}
@@ -1154,7 +1170,12 @@ export function PawChartApp() {
           />
         )}
         {modal?.type === "owner-profile" && (
-          <OwnerProfileForm ownerProfile={ownerProfile} onSubmit={updateOwnerProfile} />
+          <OwnerProfileForm
+            authEmail={authEmail}
+            isAuthenticated={isAuthenticated}
+            ownerProfile={ownerProfile}
+            onSubmit={updateOwnerProfile}
+          />
         )}
         {modal?.type === "invite-member" && (
           <InviteMemberForm
@@ -1407,10 +1428,12 @@ export function PawChartApp() {
 
 function DesktopSidebar({
   activeTab,
+  isAuthenticated,
   onAdd,
   setActiveTab,
 }: {
   activeTab: Tab;
+  isAuthenticated: boolean;
   onAdd: () => void;
   setActiveTab: (tab: Tab) => void;
 }) {
@@ -1459,10 +1482,19 @@ function DesktopSidebar({
       </nav>
 
       <div className="mt-auto rounded-lg border border-line bg-background/80 p-4">
-        <p className="text-sm font-semibold text-ink">Demo mode</p>
+        <p className="text-sm font-semibold text-ink">{isAuthenticated ? "Signed in" : "Demo mode"}</p>
         <p className="mt-2 text-sm leading-6 text-muted">
-          Mock pets and care records are active until Supabase and Google OAuth are connected.
+          {isAuthenticated
+            ? "Google sign-in is connected. Pet records still use mock data until persistence is migrated."
+            : "Mock pets and care records are active. Sign in when you want to test Google OAuth."}
         </p>
+        {!isAuthenticated ? (
+          <form action={signInWithGoogle} className="mt-3">
+            <button className="min-h-11 w-full rounded-lg bg-ink px-3 text-sm font-semibold text-white" type="submit">
+              Continue with Google
+            </button>
+          </form>
+        ) : null}
       </div>
     </aside>
   );
@@ -1538,6 +1570,8 @@ function MobileNav({
 
 function AppHeader({
   activeTab,
+  authEmail,
+  isAuthenticated,
   logs,
   onLogForDate,
   onOpenOwnerProfile,
@@ -1550,6 +1584,8 @@ function AppHeader({
   showNotifications,
 }: {
   activeTab: Tab;
+  authEmail: string | null;
+  isAuthenticated: boolean;
   logs: LogEntry[];
   onLogForDate: (task: Task) => void;
   onOpenOwnerProfile: () => void;
@@ -1579,6 +1615,16 @@ function AppHeader({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {!isAuthenticated ? (
+            <form action={signInWithGoogle}>
+              <button
+                className="min-h-11 rounded-full bg-ink px-4 text-sm font-semibold text-white shadow-sm active:scale-[0.98]"
+                type="submit"
+              >
+                Sign in
+              </button>
+            </form>
+          ) : null}
           <button
             aria-label="Notifications"
             className="relative grid h-11 w-11 place-items-center rounded-full border border-line bg-surface text-ink shadow-sm active:scale-[0.98]"
@@ -1593,7 +1639,7 @@ function AppHeader({
             ) : null}
           </button>
           <button
-            aria-label="Your info"
+            aria-label={isAuthenticated ? `Your info${authEmail ? `, ${authEmail}` : ""}` : "Your info"}
             className="grid h-11 min-w-11 place-items-center rounded-full border border-line bg-surface px-3 text-sm font-semibold text-ink shadow-sm active:scale-[0.98]"
             onClick={onOpenOwnerProfile}
             title="Your info"
@@ -3606,39 +3652,57 @@ function VetProviderForm({
 }
 
 function OwnerProfileForm({
+  authEmail,
+  isAuthenticated,
   onSubmit,
   ownerProfile,
 }: {
+  authEmail: string | null;
+  isAuthenticated: boolean;
   onSubmit: (ownerProfile: OwnerProfile) => void;
   ownerProfile: OwnerProfile;
 }) {
   return (
-    <form className="space-y-4" onSubmit={(event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      onSubmit({
-        ...ownerProfile,
-        firstName: String(form.get("firstName") || ""),
-        lastName: String(form.get("lastName") || ""),
-        email: String(form.get("email") || ""),
-        phone: String(form.get("phone") || ""),
-        city: String(form.get("city") || ""),
-      });
-    }}>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <FormField defaultValue={ownerProfile.firstName} label="First name" name="firstName" required />
-        <FormField defaultValue={ownerProfile.lastName} label="Last name" name="lastName" />
-      </div>
-      <FormField defaultValue={ownerProfile.email} label="Email" name="email" inputMode="email" type="email" />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <FormField defaultValue={ownerProfile.phone} label="Phone" name="phone" inputMode="tel" />
-        <FormField defaultValue={ownerProfile.city} label="City" name="city" />
-      </div>
+    <div className="space-y-4">
+      <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        onSubmit({
+          ...ownerProfile,
+          firstName: String(form.get("firstName") || ""),
+          lastName: String(form.get("lastName") || ""),
+          email: String(form.get("email") || ""),
+          phone: String(form.get("phone") || ""),
+          city: String(form.get("city") || ""),
+        });
+      }}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField defaultValue={ownerProfile.firstName} label="First name" name="firstName" required />
+          <FormField defaultValue={ownerProfile.lastName} label="Last name" name="lastName" />
+        </div>
+        <FormField defaultValue={ownerProfile.email} label="Email" name="email" inputMode="email" type="email" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField defaultValue={ownerProfile.phone} label="Phone" name="phone" inputMode="tel" />
+          <FormField defaultValue={ownerProfile.city} label="City" name="city" />
+        </div>
+        <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+          {isAuthenticated
+            ? `Signed in with Google${authEmail ? ` as ${authEmail}` : ""}. Pet data still uses mock records until persistence is migrated.`
+            : "Prototype profile only. Sign in with Google to test the real auth session."}
+        </p>
+        <SubmitButton label="Save your info" />
+      </form>
       <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-        Prototype profile only. Later, email and identity will come from Google OAuth and the user profile.
+        Email and identity come from Google OAuth. The editable fields are still local mock profile state until profile persistence is wired.
       </p>
-      <SubmitButton label="Save your info" />
-    </form>
+      {isAuthenticated ? (
+        <form action={signOut}>
+          <button className="min-h-11 w-full rounded-lg border border-line bg-surface px-4 text-sm font-semibold text-ink" type="submit">
+            Sign out
+          </button>
+        </form>
+      ) : null}
+    </div>
   );
 }
 

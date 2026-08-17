@@ -66,6 +66,8 @@ This file tracks important product and technical decisions so the project does n
 - Stripe subscriptions can come after the core workflows are usable.
 - Push notifications can wait; in-app reminders are acceptable for the first version.
 - Google OAuth should be the first auth method added later.
+- Google OAuth is the first auth method. Supabase owns auth sessions, Google owns identity, and Vercel only hosts the app/domain.
+- Auth callbacks use `/auth/callback`, with production URL `https://pets.vikonomics.com/auth/callback` and local URL `http://localhost:3004/auth/callback`.
 - Email magic links may be added later for household members who do not use Google.
 
 ## Pet Profiles
@@ -212,6 +214,7 @@ This file tracks important product and technical decisions so the project does n
 - Use row-level security for household data isolation.
 - Keep the UI on mock data initially and connect real persistence screen by screen.
 - Pets are the first persistence boundary: Supabase read/write helpers map database rows into the current `Pet` UI model, but the visible app stays mock-backed until auth creates an RLS-visible user session.
+- Google sign-in can establish a real Supabase session before pet persistence is migrated; mock pet data remains the active product data until each screen moves to Supabase.
 - Service worker registration should run in production only during development to avoid stale local caches.
 - Keep architecture simple for a solo founder project.
 
