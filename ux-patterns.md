@@ -86,6 +86,8 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Add Pet should stay lightweight; deeper profile context should be added through section-level edits.
 - Required fields should be limited to what is needed to save a useful record.
 - Optional details should be available without slowing down common actions.
+- Forms should progressively reveal fields based on the selected item type instead of showing irrelevant inputs.
+- Care routine forms should derive action button labels from routine type rather than asking owners to define them.
 - Care team should show primary and secondary vet status compactly, with a single section-level `Manage care team` action.
 - Care team management should combine pet-level provider assignment with saved-provider add/edit actions.
 - Owner profile should be accessible from the app header and remain separate from pet profiles.

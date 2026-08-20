@@ -5800,7 +5800,23 @@ function ScheduleCareForm({
   selectedPetId: string;
   task?: Task;
 }) {
-  const defaultDueDate = task?.dueDate ?? initialDueDate ?? todayValue;
+  const defaultDueDate =
+    task?.reminderKind === "refill"
+      ? task.refillByDate ?? task.dueDate ?? initialDueDate ?? todayValue
+      : task?.dueDate ?? initialDueDate ?? todayValue;
+  const [selectedReminderKind, setSelectedReminderKind] = useState<Task["reminderKind"]>(
+    task?.reminderKind ?? "care",
+  );
+  const showDoseField = selectedReminderKind === "medication";
+  const showProviderField =
+    providers.length > 0 &&
+    (selectedReminderKind === "vaccine" ||
+      selectedReminderKind === "vet-appointment" ||
+      selectedReminderKind === "vet-follow-up");
+  const dateLabel = routineDateLabel(selectedReminderKind);
+  const titleLabel = routineTitleLabel(selectedReminderKind);
+  const titlePlaceholder = routineTitlePlaceholder(selectedReminderKind);
+  const notesPlaceholder = routineNotesPlaceholder(selectedReminderKind);
 
   return (
     <form className="space-y-4" onSubmit={(event) => {
@@ -5809,29 +5825,37 @@ function ScheduleCareForm({
       const reminderKind = String(form.get("reminderKind") || "care") as Task["reminderKind"];
       const type = taskTypeFromReminderKind(reminderKind);
       const title = String(form.get("title") || defaultScheduleTitle(reminderKind));
+      const dueDate = String(form.get("dueDate") || defaultDueDate);
 
       onSubmit({
-        actionLabel: String(form.get("actionLabel") || defaultActionLabel(type)),
+        actionLabel: prescribedRoutineActionLabel(reminderKind),
         cadence: String(form.get("cadence") || "once") as Task["cadence"],
         doseLabel: String(form.get("doseLabel") || ""),
-        dueDate: String(form.get("dueDate") || defaultDueDate),
+        dueDate,
         notes: String(form.get("notes") || ""),
         petId: String(form.get("petId") || selectedPetId),
         providerId: String(form.get("providerId") || ""),
-        refillByDate: String(form.get("refillByDate") || ""),
+        refillByDate: reminderKind === "refill" ? dueDate : "",
         reminderKind,
         title,
         type,
       });
     }}>
-      <SelectField defaultValue={task?.petId ?? selectedPetId} label="Pet" name="petId">
-        {pets.map((pet) => (
-          <option key={pet.id} value={pet.id}>
-            {pet.name}
-          </option>
-        ))}
-      </SelectField>
-      <SelectField defaultValue={task?.reminderKind ?? "care"} label="Routine type" name="reminderKind">
+      {pets.length > 1 ? (
+        <SelectField defaultValue={task?.petId ?? selectedPetId} label="Pet" name="petId">
+          {pets.map((pet) => (
+            <option key={pet.id} value={pet.id}>
+              {pet.name}
+            </option>
+          ))}
+        </SelectField>
+      ) : null}
+      <SelectField
+        defaultValue={selectedReminderKind}
+        label="Routine type"
+        name="reminderKind"
+        onChange={(event) => setSelectedReminderKind(event.currentTarget.value as Task["reminderKind"])}
+      >
         <option value="medication">Medication dose</option>
         <option value="refill">Medication refill</option>
         <option value="care">Routine care</option>
@@ -5840,8 +5864,8 @@ function ScheduleCareForm({
         <option value="vet-appointment">Vet appointment</option>
         <option value="vet-follow-up">Vet follow-up</option>
       </SelectField>
-      <FormField defaultValue={task?.title ?? ""} label="Title" name="title" placeholder="Flea and tick treatment" />
-      <FormField defaultValue={defaultDueDate} label="Next due date" name="dueDate" type="date" />
+      <FormField defaultValue={task?.title ?? ""} label={titleLabel} name="title" placeholder={titlePlaceholder} />
+      <FormField defaultValue={defaultDueDate} label={dateLabel} name="dueDate" type="date" />
       <SelectField defaultValue={task?.cadence ?? "once"} label="Cadence" name="cadence">
         <option value="once">One time</option>
         <option value="daily">Daily</option>
@@ -5850,9 +5874,15 @@ function ScheduleCareForm({
         <option value="every-8-weeks">Every 8 weeks</option>
         <option value="yearly">Yearly</option>
       </SelectField>
-      <FormField defaultValue={task?.doseLabel ?? ""} label="Dose, brand, label, or reason" name="doseLabel" placeholder="NexGard, one monthly chew, 11-22 lb" />
-      <FormField defaultValue={task?.refillByDate ?? ""} label="Refill by" name="refillByDate" type="date" />
-      {providers.length > 0 ? (
+      {showDoseField ? (
+        <FormField
+          defaultValue={task?.doseLabel ?? ""}
+          label="Dose or label"
+          name="doseLabel"
+          placeholder="One monthly chew, 11-22 lb"
+        />
+      ) : null}
+      {showProviderField ? (
         <SelectField defaultValue={task?.providerId ?? ""} label="Vet or clinic" name="providerId">
           <option value="">Not set</option>
           {providers.map((provider) => (
@@ -5862,8 +5892,10 @@ function ScheduleCareForm({
           ))}
         </SelectField>
       ) : null}
-      <FormField defaultValue={task?.actionLabel ?? ""} label="Button label" name="actionLabel" placeholder="Mark done" />
-      <TextAreaField defaultValue={task?.notes ?? ""} label="Notes" name="notes" placeholder="What should the owner know before this is due?" />
+      <p className="rounded-lg bg-background px-3 py-2 text-xs font-semibold text-muted">
+        Action button: {prescribedRoutineActionLabel(selectedReminderKind)}
+      </p>
+      <TextAreaField defaultValue={task?.notes ?? ""} label="Notes" name="notes" placeholder={notesPlaceholder} />
       <SubmitButton label="Save routine" />
     </form>
   );
@@ -7644,11 +7676,13 @@ function SelectField({
   defaultValue,
   label,
   name,
+  onChange,
 }: {
   children: React.ReactNode;
   defaultValue?: string;
   label: string;
   name: string;
+  onChange?: (event: FormEvent<HTMLSelectElement>) => void;
 }) {
   return (
     <label className="block text-sm font-semibold text-ink">
@@ -7657,6 +7691,7 @@ function SelectField({
         className="mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm font-medium text-ink outline-none focus:border-primary"
         defaultValue={defaultValue}
         name={name}
+        onChange={onChange}
       >
         {children}
       </select>
@@ -7977,20 +8012,65 @@ function taskTypeFromReminderKind(kind: Task["reminderKind"]): Task["type"] {
 }
 
 function defaultActionLabel(type: Task["type"]) {
-  if (type === "medication") return "Mark given";
-  if (type === "refill") return "Mark ordered";
+  if (type === "medication") return "Log dose";
+  if (type === "refill") return "Refilled";
   if (type === "vaccine") return "Review";
   if (type === "measurement") return "Log weight";
-  if (type === "vet") return "Mark done";
-  return "Mark done";
+  return "Done";
 }
 
 function taskActionLabel(task: Task) {
   if (task.type === "medication") return "Log dose";
-  if (task.type === "refill") return "Done";
+  if (task.type === "refill") return "Refilled";
   if (task.type === "vaccine") return "Review";
   if (task.type === "measurement") return "Log weight";
   return "Done";
+}
+
+function prescribedRoutineActionLabel(kind: Task["reminderKind"]) {
+  if (kind === "medication") return "Log dose";
+  if (kind === "refill") return "Refilled";
+  if (kind === "vaccine") return "Review";
+  if (kind === "measurement") return "Log weight";
+  return "Done";
+}
+
+function routineDateLabel(kind: Task["reminderKind"]) {
+  if (kind === "refill") return "Refill by date";
+  if (kind === "vaccine") return "Due / review date";
+  if (kind === "measurement") return "Next weigh-in";
+  if (kind === "vet-appointment") return "Appointment date";
+  if (kind === "vet-follow-up") return "Follow-up date";
+  return "Next due date";
+}
+
+function routineTitleLabel(kind: Task["reminderKind"]) {
+  if (kind === "medication") return "Medication / brand";
+  if (kind === "refill") return "Medication / prescription";
+  if (kind === "vaccine") return "Vaccine";
+  if (kind === "measurement") return "Measurement";
+  if (kind === "vet-appointment" || kind === "vet-follow-up") return "Reason";
+  return "Title";
+}
+
+function routineTitlePlaceholder(kind: Task["reminderKind"]) {
+  if (kind === "medication") return "NexGard";
+  if (kind === "refill") return "Heartgard prescription";
+  if (kind === "vaccine") return "Rabies";
+  if (kind === "measurement") return "Weight check";
+  if (kind === "vet-appointment") return "Annual wellness exam";
+  if (kind === "vet-follow-up") return "Skin follow-up";
+  return "Bath";
+}
+
+function routineNotesPlaceholder(kind: Task["reminderKind"]) {
+  if (kind === "medication") return "When to give it, with food, or side effects to watch for";
+  if (kind === "refill") return "Where to order it, prescription details, or pharmacy notes";
+  if (kind === "vaccine") return "Requirement, clinic, or proof details";
+  if (kind === "measurement") return "Scale used, goal, or body condition notes";
+  if (kind === "vet-appointment") return "Questions to ask, prep instructions, or appointment context";
+  if (kind === "vet-follow-up") return "What needs to be rechecked or discussed";
+  return "What should the owner know before this is due?";
 }
 
 function scrollToSection(id: string) {

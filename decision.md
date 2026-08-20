@@ -40,6 +40,8 @@ This file tracks important product and technical decisions so the project does n
 - Mock care tasks should carry structured due dates, not only human labels, so Calendar can place them on future dates.
 - Care routines are part of the mock MVP: users can create future routines, edit routine details, log backdated completion, and complete scheduled items.
 - Care routine v1 reuses the local `Task` model instead of introducing a separate scheduler table before Supabase.
+- Care routine add/edit forms should use progressive disclosure by routine type so owners only see relevant fields.
+- Care routine action labels are prescribed by routine type, not user-entered, so completion cards stay consistent.
 - Calendar should include an `Edit routines` surface where users can see every active scheduled item for the selected pet and edit each one.
 - Recurring care routines advance their next due date when marked done; one-time routines leave active planning after completion and remain visible through logs/history.
 - Completion logs store both the original due date and the actual completion date so the app can show whether care was early, on time, or late.
