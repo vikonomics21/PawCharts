@@ -97,12 +97,16 @@ export type DocumentRecordType =
   | "pet";
 
 export type RecordDocument = {
+  contentType?: string;
   createdAt: string;
   documentGroupId: string;
+  documentType?: string;
   id: string;
   petId: string;
   recordType: DocumentRecordType;
   recordId: string;
+  signedUrl?: string;
+  storagePath?: string;
   supersededById?: string;
   title: string;
   fileType: "pdf" | "image";

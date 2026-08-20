@@ -29,6 +29,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Completion logs that preserve original due date, actual completion date, and early/on-time/late status.
 - Vaccines, medications, care logs, measurements, vet visits, notes, and document attachment concepts.
 - Private-by-default document behavior in the product model.
+- Real private document upload/storage for PDFs and images through Supabase Storage and persistent `documents` rows.
 - Mock document versioning for record attachments, starting with vaccine proof latest/older grouping.
 - Household sharing UX model with roles.
 - Pet-level sharing/access section inside Pets.
@@ -45,8 +46,8 @@ This file keeps the current build focused. It separates what belongs in the pres
 
 ## Later
 
-- Database persistence and storage.
-- Real file upload and preview handling.
+- Persistence for health records, routines, lists, logs, sharing, and reminders beyond the first Pets/documents boundary.
+- Larger/resumable file uploads if private beta usage needs them.
 - Public share pages backed by live data.
 - Stripe subscriptions and paywall behavior.
 - Push notifications.

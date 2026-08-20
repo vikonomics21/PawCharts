@@ -206,6 +206,9 @@ This file tracks important product and technical decisions so the project does n
 - QR codes should be generated inside the owner app for public share links.
 - Documents should be manually attached to share links for safety and clarity.
 - Public share data should be exposed through a controlled payload rather than broad public table access.
+- Private beta document uploads use Supabase Storage bucket `pet-documents`, with one persistent `documents` row per uploaded PDF/image.
+- Production document uploads are private by default, limited to 10 MB, and support PDF, JPG, PNG, WebP, HEIC, and HEIF.
+- AI parsing is not part of document upload v1; future parsing must show a review screen before writing extracted data.
 - Sharing/access should separate household member access from public record links.
 - Visible sharing/access actions should be functional in mock state, not static placeholders.
 - Household access is pet-specific in the prototype, with Admin, Editor, and Viewer roles.
@@ -251,6 +254,6 @@ This file tracks important product and technical decisions so the project does n
 
 - Actual pet data is pending.
 - Subscription enforcement details are pending.
-- Full upload UX and file size/type limits are pending.
+- Larger/resumable upload needs are pending after private beta usage is observed.
 - Public share page visual design is pending.
 - Auth and onboarding flow details are pending.

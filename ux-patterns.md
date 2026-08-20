@@ -123,6 +123,9 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Attached file rows in compact record cards should also open preview when preview behavior is available.
 - Document privacy should be stated once, not repeated in both metadata and card copy.
 - Empty attachment states should stay compact; show an attach icon instead of a large empty file row.
+- Upload actions should accept PDFs and images, create private documents, and immediately show the new row in All documents or the attached record.
+- Document rows with a stored file should open the file through a signed URL; do not add a separate preview button.
+- Rename and delete should work from All documents, with delete requiring confirmation.
 - Public share links should include documents only when explicitly selected.
 
 ## Notifications

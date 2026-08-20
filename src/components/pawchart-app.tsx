@@ -40,11 +40,15 @@ import {
   completeProductionOnboarding,
   createProductionPet,
   createProductionVetProvider,
+  createProductionDocumentSignedUrl,
   updateProductionOwnerProfile,
   updateProductionPet,
   updateProductionPetCareTeam,
   updateProductionPetPhoto,
   updateProductionVetProvider,
+  deleteProductionDocument,
+  renameProductionDocument,
+  uploadProductionDocument,
 } from "@/app/pawchart-production-actions";
 import {
   demoCareEvents,
@@ -1215,8 +1219,20 @@ export function PawChartApp({
     setTasks((current) => current.filter((task) => task.id !== taskId));
   }
 
-  function deleteDocument(documentId: string) {
+  async function deleteDocument(documentId: string) {
+    if (!isLocalDemo) {
+      try {
+        await deleteProductionDocument(documentId);
+        setDocuments((current) => current.filter((document) => document.id !== documentId));
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setDocuments((current) => current.filter((document) => document.id !== documentId));
+    setModal(null);
   }
 
   function deleteVetVisit(visitId: string) {
@@ -1287,14 +1303,25 @@ export function PawChartApp({
     setCopiedShareLinkId((current) => (current === linkId ? null : current));
   }
 
-  function renameDocument(documentId: string, title: string) {
+  async function renameDocument(documentId: string, title: string) {
+    if (!isLocalDemo) {
+      try {
+        const document = await renameProductionDocument(documentId, title);
+        setDocuments((current) => current.map((item) => (item.id === documentId ? document : item)));
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setDocuments((current) =>
       current.map((document) => (document.id === documentId ? { ...document, title } : document)),
     );
     setModal(null);
   }
 
-  function attachDocuments({
+  async function attachDocuments({
     files,
     petId,
     recordId,
@@ -1307,6 +1334,30 @@ export function PawChartApp({
   }) {
     if (!files?.length) return;
     const uploadedFiles = Array.from(files);
+
+    if (!isLocalDemo) {
+      try {
+        const uploadedDocuments: RecordDocument[] = [];
+
+        for (const file of uploadedFiles) {
+          uploadedDocuments.push(
+            await uploadPersistentDocument({
+              documentType: recordType === "vaccine_record" ? "vaccine" : recordType,
+              file,
+              petId,
+              recordId,
+              recordType,
+              title: file.name,
+            }),
+          );
+        }
+
+        setDocuments((current) => [...uploadedDocuments, ...current]);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
 
     setDocuments((current) => {
       const existing = current.filter(
@@ -1346,6 +1397,61 @@ export function PawChartApp({
     });
   }
 
+  async function uploadDocument(input: {
+    documentType: string;
+    file: File | null;
+    petId: string;
+    title: string;
+  }) {
+    if (!isLocalDemo) {
+      const file = input.file;
+
+      if (!file) {
+        handleProductionError(new Error("Choose a PDF or image to upload."));
+        return;
+      }
+
+      try {
+        const document = await uploadPersistentDocument({ ...input, file });
+        setDocuments((current) => [document, ...current]);
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    uploadPlaceholderDocument({
+      documentType: input.documentType,
+      fileType: input.file ? (input.file.type === "application/pdf" ? "pdf" : "image") : undefined,
+      petId: input.petId,
+      sizeLabel: input.file ? formatFileSize(input.file.size) : "Pending upload",
+      title: input.title || input.file?.name || "",
+    });
+  }
+
+  async function uploadPersistentDocument(input: {
+    documentType: string;
+    file: File;
+    petId: string;
+    recordId?: string;
+    recordType?: DocumentRecordType;
+    title: string;
+  }) {
+    const formData = new FormData();
+    formData.set("documentType", input.documentType);
+    formData.set("file", input.file);
+    formData.set("petId", input.petId);
+    formData.set("title", input.title || input.file.name);
+
+    if (input.recordId && input.recordType) {
+      formData.set("recordId", input.recordId);
+      formData.set("recordType", input.recordType);
+    }
+
+    return uploadProductionDocument(formData);
+  }
+
   function uploadPlaceholderDocument(input: {
     petId: string;
     title: string;
@@ -1370,6 +1476,28 @@ export function PawChartApp({
 
     setDocuments((current) => [document, ...current]);
     setModal(null);
+  }
+
+  async function previewDocument(document: RecordDocument) {
+    if (!isLocalDemo) {
+      try {
+        const signedUrl = document.signedUrl ?? await createProductionDocumentSignedUrl(document.id);
+        setDocuments((current) =>
+          current.map((item) => (item.id === document.id ? { ...item, signedUrl } : item)),
+        );
+        window.open(signedUrl, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    setModal({
+      title: document.title,
+      type: "record-detail",
+      titleText: document.title,
+      body: `${document.fileType.toUpperCase()} preview placeholder. This file stays private unless you explicitly share it later.`,
+    });
   }
 
   function createPetKit(input: {
@@ -1564,7 +1692,7 @@ export function PawChartApp({
     );
   }
 
-function uploadKitItemDocument(tripId: string, itemId: string, files: FileList | null) {
+  async function uploadKitItemDocument(tripId: string, itemId: string, files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
 
@@ -1575,20 +1703,36 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
     if (!trip) return;
 
     const timestamp = Date.now();
-    const document: RecordDocument = {
-      createdAt: new Date(timestamp).toISOString(),
-      documentGroupId: `kit:${tripId}:${itemId}`,
-      id: `doc-kit-item-${itemId}-${timestamp}`,
-      petId: itemPetId,
-      recordId: itemPetId,
-      recordType: "pet",
-      title: file.name,
-      fileType: file.type === "application/pdf" ? "pdf" : "image",
-      sizeLabel: formatFileSize(file.size),
-      addedLabel: "Just now",
-      privateByDefault: true,
-      versionLabel: "Latest",
-    };
+    let document: RecordDocument;
+
+    if (!isLocalDemo) {
+      try {
+        document = await uploadPersistentDocument({
+          documentType: checklistItem?.documentType ?? documentLink?.documentType ?? "general",
+          file,
+          petId: itemPetId,
+          title: file.name,
+        });
+      } catch (error) {
+        handleProductionError(error);
+        return;
+      }
+    } else {
+      document = {
+        addedLabel: "Just now",
+        createdAt: new Date(timestamp).toISOString(),
+        documentGroupId: `kit:${tripId}:${itemId}`,
+        fileType: file.type === "application/pdf" ? "pdf" : "image",
+        id: `doc-kit-item-${itemId}-${timestamp}`,
+        petId: itemPetId,
+        privateByDefault: true,
+        recordId: itemPetId,
+        recordType: "pet",
+        sizeLabel: formatFileSize(file.size),
+        title: file.name,
+        versionLabel: "Latest",
+      };
+    }
 
     setDocuments((current) => [document, ...current]);
     setPetKits((current) =>
@@ -1670,7 +1814,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
     );
   }
 
-  function uploadKitDocument(tripId: string, documentLinkId: string, files: FileList | null) {
+  async function uploadKitDocument(tripId: string, documentLinkId: string, files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
 
@@ -1678,25 +1822,41 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
     const link = trip?.documentLinks.find((item) => item.id === documentLinkId);
     if (!trip || !link) return;
 
-    const recordType = link.recordType ?? "pet";
-    const recordId = link.recordId ?? link.petId;
     const timestamp = Date.now();
-    const document: RecordDocument = {
-      createdAt: new Date(timestamp).toISOString(),
-      documentGroupId: link.documentId
-        ? documents.find((item) => item.id === link.documentId)?.documentGroupId ?? `kit:${tripId}:${documentLinkId}`
-        : `kit:${tripId}:${documentLinkId}`,
-      id: `doc-kit-${documentLinkId}-${timestamp}`,
-      petId: link.petId,
-      recordId,
-      recordType,
-      title: file.name,
-      fileType: file.type === "application/pdf" ? "pdf" : "image",
-      sizeLabel: formatFileSize(file.size),
-      addedLabel: "Just now",
-      privateByDefault: true,
-      versionLabel: "Latest",
-    };
+    let document: RecordDocument;
+
+    if (!isLocalDemo) {
+      try {
+        document = await uploadPersistentDocument({
+          documentType: link.documentType,
+          file,
+          petId: link.petId,
+          title: file.name,
+        });
+      } catch (error) {
+        handleProductionError(error);
+        return;
+      }
+    } else {
+      const recordType = link.recordType ?? "pet";
+      const recordId = link.recordId ?? link.petId;
+      document = {
+        addedLabel: "Just now",
+        createdAt: new Date(timestamp).toISOString(),
+        documentGroupId: link.documentId
+          ? documents.find((item) => item.id === link.documentId)?.documentGroupId ?? `kit:${tripId}:${documentLinkId}`
+          : `kit:${tripId}:${documentLinkId}`,
+        fileType: file.type === "application/pdf" ? "pdf" : "image",
+        id: `doc-kit-${documentLinkId}-${timestamp}`,
+        petId: link.petId,
+        privateByDefault: true,
+        recordId,
+        recordType,
+        sizeLabel: formatFileSize(file.size),
+        title: file.name,
+        versionLabel: "Latest",
+      };
+    }
 
     setDocuments((current) => [document, ...current]);
     setPetKits((current) =>
@@ -2036,6 +2196,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
                   onAttachDocuments={attachDocuments}
                   onEditVaccine={(vaccine) => setModal({ title: "Edit vaccine", type: "add-vaccine", petId: selectedPet.id, vaccine })}
                   onLogMedication={() => setModal({ title: "Add medication", type: "medication", petId: selectedPet.id })}
+                  onPreviewDocument={(document) => void previewDocument(document)}
                   onRecordDetail={(titleText, body) => setModal({ title: titleText, type: "record-detail", titleText, body })}
                   onDeleteVetVisit={(visit) => setModal({ title: "Delete vet visit?", type: "confirm-delete-vet-visit", visit })}
                   onUndo={(logId) => {
@@ -2192,8 +2353,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
             confirmLabel="Delete document"
             onCancel={() => setModal(null)}
             onConfirm={() => {
-              deleteDocument(modal.document.id);
-              setModal(null);
+              void deleteDocument(modal.document.id);
             }}
           />
         )}
@@ -2320,11 +2480,12 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
                 input,
               )
             }
+            onPreviewDocument={(document) => void previewDocument(document)}
             task={modal.task}
           />
         )}
         {modal?.type === "upload-document" && (
-          <UploadDocumentForm onSubmit={(input) => uploadPlaceholderDocument({ ...input, petId: modal.petId })} />
+          <UploadDocumentForm onSubmit={(input) => void uploadDocument({ ...input, petId: modal.petId })} />
         )}
         {modal?.type === "rename-document" && (
           <RenameDocumentForm
@@ -2340,7 +2501,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
             }}
             documents={documents.filter((document) => document.petId === modal.petId)}
             onEditDocument={(document) => setModal({ title: "Rename document", type: "rename-document", document })}
-            onRecordDetail={(titleText, body) => setModal({ title: titleText, type: "record-detail", titleText, body })}
+            onPreviewDocument={(document) => void previewDocument(document)}
             onUploadDocument={() => setModal({ title: "Upload file", type: "upload-document", petId: modal.petId })}
           />
         )}
@@ -2364,14 +2525,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
             onEditKit={(trip) => setModal({ title: "Edit list", type: "edit-kit", trip })}
             focusedKitId={modal.kitId}
             onCreateTrip={(templateId) => setModal({ title: "Create list", type: "create-kit", petId: modal.pet.id, templateId })}
-            onPreviewDocument={(document) =>
-              setModal({
-                title: document.title,
-                type: "record-detail",
-                titleText: document.title,
-                body: `${document.fileType.toUpperCase()} preview placeholder. This file stays private unless you explicitly share it later.`,
-              })
-            }
+            onPreviewDocument={(document) => void previewDocument(document)}
             onRemoveChecklistItem={(trip, item) =>
               setModal({ title: "Remove item?", type: "confirm-remove-kit-item", tripId: trip.id, itemId: item.id, label: item.label })
             }
@@ -2594,7 +2748,7 @@ function OnboardingView({
               <label className="block">
                 <span className="mb-1 block text-sm font-semibold text-ink">Optional records</span>
                 <input
-                  accept="application/pdf,image/*"
+                  accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
                   className="block w-full rounded-lg border border-line bg-white px-3 py-3 text-sm"
                   multiple
                   name="records"
@@ -2603,7 +2757,7 @@ function OnboardingView({
               </label>
             ) : (
               <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-                Record uploads come after the first private beta persistence pass. Start simple now and add records once storage is connected.
+                Start simple now, then upload vaccine, vet, and other records from Home or Health once this pet is created.
               </p>
             )}
 
@@ -4462,6 +4616,7 @@ function RecordsView({
   onDeleteVetVisit,
   onEditVaccine,
   onLogMedication,
+  onPreviewDocument,
   onRecordDetail,
   onUndo,
   onViewDocuments,
@@ -4488,6 +4643,7 @@ function RecordsView({
   onDeleteVetVisit: (visit: VetVisit) => void;
   onEditVaccine: (vaccine: VaccineRecord) => void;
   onLogMedication: () => void;
+  onPreviewDocument: (document: RecordDocument) => void;
   onRecordDetail: (titleText: string, body: string) => void;
   onUndo: (logId: string) => void;
   onViewDocuments: () => void;
@@ -4528,6 +4684,7 @@ function RecordsView({
           onDeleteVetVisit={onDeleteVetVisit}
           onEditVaccine={onEditVaccine}
           onLogVetVisit={onAddVetVisit}
+          onPreviewDocument={onPreviewDocument}
           onRecordDetail={onRecordDetail}
           onViewDocuments={onViewDocuments}
           onViewFullHistory={() => setShowFullHistory(true)}
@@ -4679,6 +4836,7 @@ function HealthView({
   onDeleteVetVisit,
   onEditVaccine,
   onLogVetVisit,
+  onPreviewDocument,
   onRecordDetail,
   onUndo,
   onViewDocuments,
@@ -4704,6 +4862,7 @@ function HealthView({
   onDeleteVetVisit: (visit: VetVisit) => void;
   onEditVaccine: (vaccine: VaccineRecord) => void;
   onLogVetVisit: () => void;
+  onPreviewDocument: (document: RecordDocument) => void;
   onRecordDetail: (titleText: string, body: string) => void;
   onUndo: (logId: string) => void;
   onViewDocuments: () => void;
@@ -4784,12 +4943,7 @@ function HealthView({
                     <VaccineProofFiles
                       latestDocument={latestProof}
                       olderDocuments={olderProofFiles}
-                      onPreview={(document) =>
-                        onRecordDetail(
-                          document.title,
-                          "Preview placeholder. Real preview will open PDFs and images from Supabase Storage.",
-                        )
-                      }
+                      onPreview={onPreviewDocument}
                     />
                   ) : null}
                 </article>
@@ -4886,7 +5040,12 @@ function HealthView({
                       </div>
                       {visitDocuments.length > 0 ? (
                         <div className="mt-3">
-                          <DocumentList documents={visitDocuments} emptyText="No bill attached." compact />
+                          <DocumentList
+                            documents={visitDocuments}
+                            emptyText="No bill attached."
+                            onPreview={onPreviewDocument}
+                            compact
+                          />
                         </div>
                       ) : null}
                     </div>
@@ -5742,13 +5901,13 @@ function HealthDocumentsModal({
   deleteDocument,
   documents,
   onEditDocument,
-  onRecordDetail,
+  onPreviewDocument,
   onUploadDocument,
 }: {
   deleteDocument: (documentId: string) => void;
   documents: RecordDocument[];
   onEditDocument: (document: RecordDocument) => void;
-  onRecordDetail: (titleText: string, body: string) => void;
+  onPreviewDocument: (document: RecordDocument) => void;
   onUploadDocument: () => void;
 }) {
   return (
@@ -5771,7 +5930,7 @@ function HealthDocumentsModal({
               document={document}
               key={document.id}
               onDelete={() => deleteDocument(document.id)}
-              onPreview={() => onRecordDetail(document.title, "Preview placeholder. Real preview will open PDFs and images from Supabase Storage.")}
+              onPreview={() => onPreviewDocument(document)}
               onRename={() => onEditDocument(document)}
             />
           ))}
@@ -5850,11 +6009,13 @@ function WeightForm({ onSubmit, task }: { onSubmit: (input: { occurredOn: string
 function MedicationForm({
   documents,
   onAttachDocuments,
+  onPreviewDocument,
   onSubmit,
   task,
 }: {
   documents: RecordDocument[];
   onAttachDocuments: (files: FileList | null) => void;
+  onPreviewDocument: (document: RecordDocument) => void;
   onSubmit: (input: { occurredOn: string; details: string; medication: string }) => void;
   task?: Task;
 }) {
@@ -5878,7 +6039,7 @@ function MedicationForm({
       <TextAreaField label="Notes" name="details" placeholder="Prescription, vet, reaction, or reminder context" />
       <div>
         <p className="mb-2 text-sm font-semibold text-ink">Prescription labels</p>
-        <DocumentList documents={documents} emptyText="No labels attached." compact />
+        <DocumentList documents={documents} emptyText="No labels attached." onPreview={onPreviewDocument} compact />
         <AttachDocumentButton label="Attach label" onAttach={onAttachDocuments} />
       </div>
       <SubmitButton label={task ? "Log dose" : "Add medication"} />
@@ -5889,7 +6050,7 @@ function MedicationForm({
 function UploadDocumentForm({
   onSubmit,
 }: {
-  onSubmit: (input: { title: string; documentType: string; fileType?: "pdf" | "image"; sizeLabel?: string }) => void;
+  onSubmit: (input: { title: string; documentType: string; file: File | null }) => void;
 }) {
   return (
     <form className="space-y-4" onSubmit={(event) => {
@@ -5898,10 +6059,9 @@ function UploadDocumentForm({
       const file = form.get("file");
       const selectedFile = file instanceof File && file.size > 0 ? file : null;
       onSubmit({
-        title: String(form.get("title") || ""),
         documentType: String(form.get("documentType") || "general"),
-        fileType: selectedFile ? (selectedFile.type === "application/pdf" ? "pdf" : "image") : undefined,
-        sizeLabel: selectedFile ? formatFileSize(selectedFile.size) : "Pending upload",
+        file: selectedFile,
+        title: String(form.get("title") || selectedFile?.name || ""),
       });
     }}>
       <FormField label="File name" name="title" placeholder="Vet visit summary.pdf" required />
@@ -5916,7 +6076,7 @@ function UploadDocumentForm({
         </select>
       </label>
       <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-        Prototype placeholder: real uploads will store PDFs and images in Supabase Storage.
+        Files are private by default. You can upload records now; AI extraction comes later and will ask before saving anything.
       </p>
       <SubmitButton label="Upload file" />
     </form>
@@ -6438,7 +6598,7 @@ function KitChecklistRow({
             <Upload aria-hidden className="h-5 w-5" />
             <span className="sr-only">Upload document</span>
             <input
-              accept="application/pdf,image/*"
+              accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
               className="sr-only"
               onChange={(event) => {
                 onUpload(event.target.files);
@@ -7315,7 +7475,7 @@ function AttachDocumentButton({
       <Paperclip aria-hidden className={cn("h-4 w-4", !iconOnly && "mr-2")} />
       <span className={cn(iconOnly && "sr-only")}>{label}</span>
       <input
-        accept="application/pdf,image/*"
+        accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
         className="sr-only"
         multiple
         onChange={(event) => {
@@ -7393,12 +7553,12 @@ function FileField({ label, name }: { label: string; name: string }) {
     <label className="block text-sm font-semibold text-ink">
       {label}
       <input
-        accept="application/pdf,image/*"
+        accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
         className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-3 text-sm font-medium text-ink file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-primary"
         name={name}
         type="file"
       />
-      <span className="mt-2 block text-xs font-medium text-muted">Private by default. AI extraction comes later after upload storage exists.</span>
+      <span className="mt-2 block text-xs font-medium text-muted">Private by default. AI extraction comes later and will ask before saving.</span>
     </label>
   );
 }

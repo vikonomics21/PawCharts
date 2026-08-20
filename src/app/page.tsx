@@ -35,6 +35,7 @@ export default async function Home() {
         const productionWorkspace = await fetchProductionWorkspace(supabase, user);
         ownerProfile = productionWorkspace.ownerProfile;
         initialData = {
+          documents: productionWorkspace.documents,
           pets: productionWorkspace.pets,
           vetProviders: productionWorkspace.vetProviders,
         };

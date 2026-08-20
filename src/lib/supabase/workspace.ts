@@ -1,6 +1,7 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 import type { OwnerProfile, VetProvider } from "@/data/demo";
+import { fetchDocumentsForCurrentUser } from "@/lib/supabase/documents";
 import { fetchPetsForCurrentUser } from "@/lib/supabase/pets";
 
 export type PawChartHousehold = {
@@ -49,7 +50,7 @@ type VetProviderRow = {
 };
 
 export async function fetchProductionWorkspace(supabase: SupabaseClient, user: User) {
-  const [profileResult, membershipResult, pets] = await Promise.all([
+  const [profileResult, membershipResult, pets, documents] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, email, first_name, last_name, phone, city")
@@ -63,6 +64,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
       .limit(1)
       .maybeSingle(),
     fetchPetsForCurrentUser(supabase),
+    fetchDocumentsForCurrentUser(supabase),
   ]);
 
   if (profileResult.error) {
@@ -79,6 +81,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
 
   return {
     ownerProfile: mapProfileToOwnerProfile(profileResult.data as ProfileRow | null, user),
+    documents,
     pets,
     vetProviders,
     workspace: {

@@ -2,8 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 
-import type { OwnerProfile, Pet, PetSpecies, VetProvider } from "@/data/demo";
+import type { DocumentRecordType, OwnerProfile, Pet, PetSpecies, RecordDocument, VetProvider } from "@/data/demo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  PET_DOCUMENT_BUCKET,
+  createDocumentSignedUrl,
+  fetchDocumentById,
+  formatFileSize,
+  isDocumentRecordType,
+  mapDocumentRowToRecordDocument,
+} from "@/lib/supabase/documents";
 import { PET_PHOTO_BUCKET, mapPetRowToPet, mapPetRowToPetWithSignedPhoto } from "@/lib/supabase/pets";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fetchVetProvidersForHousehold, mapVetProviderRow, type PawChartWorkspace } from "@/lib/supabase/workspace";
@@ -230,6 +238,173 @@ export async function updateProductionPetPhoto(formData: FormData): Promise<Pet>
   revalidatePath("/");
 
   return pet;
+}
+
+export async function uploadProductionDocument(formData: FormData): Promise<RecordDocument> {
+  const { supabase, user } = await requireCurrentUser();
+  const petId = String(formData.get("petId") || "");
+  const title = String(formData.get("title") || "").trim();
+  const documentType = String(formData.get("documentType") || "general").trim() || "general";
+  const recordTypeValue = String(formData.get("recordType") || "");
+  const recordId = String(formData.get("recordId") || "");
+  const file = formData.get("file");
+
+  if (!petId) {
+    throw new Error("Choose a pet for this document.");
+  }
+
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("Choose a PDF or image to upload.");
+  }
+
+  validatePetDocument(file);
+
+  const { data: petRow, error: petError } = await supabase
+    .from("pets")
+    .select("id, household_id")
+    .eq("id", petId)
+    .single();
+
+  if (petError) {
+    throw petError;
+  }
+
+  const storagePath = buildPetDocumentPath(petRow.household_id, petRow.id, file);
+  const { error: uploadError } = await supabase.storage.from(PET_DOCUMENT_BUCKET).upload(storagePath, file, {
+    contentType: file.type,
+    upsert: false,
+  });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("documents")
+      .insert({
+        content_type: file.type,
+        created_by: user.id,
+        document_type: documentType,
+        file_size_bytes: file.size,
+        pet_id: petId,
+        private_by_default: true,
+        storage_path: storagePath,
+        title: title || file.name || "Uploaded document",
+      })
+      .select("id, pet_id, title, storage_path, content_type, file_size_bytes, document_type, private_by_default, created_at")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const recordType = isDocumentRecordType(recordTypeValue) && recordTypeValue !== "pet" ? recordTypeValue : null;
+    const shouldLinkRecord = Boolean(recordType && recordId);
+    const documentLinks = shouldLinkRecord
+      ? [
+          {
+            record_id: recordId,
+            record_type: recordType as DocumentRecordType,
+          },
+        ]
+      : [];
+
+    if (recordType && recordId) {
+      const { error: linkError } = await supabase.from("document_links").insert({
+        created_by: user.id,
+        document_id: data.id,
+        record_id: recordId,
+        record_type: recordType,
+      });
+
+      if (linkError) {
+        throw linkError;
+      }
+    }
+
+    revalidatePath("/");
+
+    return mapDocumentRowToRecordDocument(supabase, {
+      ...data,
+      document_links: documentLinks,
+    });
+  } catch (error) {
+    await supabase.storage.from(PET_DOCUMENT_BUCKET).remove([storagePath]);
+    throw error;
+  }
+}
+
+export async function renameProductionDocument(documentId: string, title: string): Promise<RecordDocument> {
+  const supabase = createSupabaseServerClient();
+  const trimmedTitle = title.trim();
+
+  if (!trimmedTitle) {
+    throw new Error("Document name is required.");
+  }
+
+  const { error } = await supabase
+    .from("documents")
+    .update({ title: trimmedTitle })
+    .eq("id", documentId);
+
+  if (error) {
+    throw error;
+  }
+
+  const document = await fetchDocumentById(supabase, documentId);
+
+  if (!document) {
+    throw new Error("Document was renamed, but could not be reloaded.");
+  }
+
+  revalidatePath("/");
+
+  return document;
+}
+
+export async function deleteProductionDocument(documentId: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("documents")
+    .select("storage_path")
+    .eq("id", documentId)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  const { error: storageError } = await supabase.storage
+    .from(PET_DOCUMENT_BUCKET)
+    .remove([data.storage_path]);
+
+  if (storageError) {
+    throw storageError;
+  }
+
+  const { error: deleteError } = await supabase.from("documents").delete().eq("id", documentId);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  revalidatePath("/");
+}
+
+export async function createProductionDocumentSignedUrl(documentId: string): Promise<string> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("documents")
+    .select("storage_path")
+    .eq("id", documentId)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return createDocumentSignedUrl(supabase, data.storage_path);
 }
 
 export async function createProductionVetProvider(input: VetProviderActionInput): Promise<VetProvider> {
@@ -504,6 +679,45 @@ function buildPetPhotoPath(householdId: string, petId: string, file: File) {
   const extension = extensionByType[file.type] ?? "jpg";
 
   return `households/${householdId}/pets/${petId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+}
+
+function validatePetDocument(file: File) {
+  const allowedTypes = new Set([
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+  ]);
+  const maxBytes = 10 * 1024 * 1024;
+
+  if (!allowedTypes.has(file.type)) {
+    throw new Error("Documents must be PDF, JPG, PNG, WebP, HEIC, or HEIF files.");
+  }
+
+  if (file.size > maxBytes) {
+    throw new Error(`Documents must be ${formatFileSize(maxBytes)} or smaller.`);
+  }
+}
+
+function buildPetDocumentPath(householdId: string, petId: string, file: File) {
+  const extensionByType: Record<string, string> = {
+    "application/pdf": "pdf",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  };
+  const extension = extensionByType[file.type] ?? sanitizeFileExtension(file.name) ?? "bin";
+
+  return `households/${householdId}/pets/${petId}/documents/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+}
+
+function sanitizeFileExtension(fileName: string) {
+  const extension = fileName.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return extension || null;
 }
 
 async function replaceTrainingCues(petId: string, cues: { cue: string; action: string }[]) {
