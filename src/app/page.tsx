@@ -36,6 +36,7 @@ export default async function Home() {
         ownerProfile = productionWorkspace.ownerProfile;
         initialData = {
           documents: productionWorkspace.documents,
+          measurements: productionWorkspace.measurements,
           pets: productionWorkspace.pets,
           vetProviders: productionWorkspace.vetProviders,
         };

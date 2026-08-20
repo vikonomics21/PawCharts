@@ -13,7 +13,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Pet profiles with overview, species details, behavior, care preferences, medical notes, and compact sharing/access.
 - Training cues profile summary with a full-list detail view.
 - Adoption/background and food preference profile sections.
-- Compact pet measurements entry point backed by mock measurement logs and direct weight logging.
+- Compact pet measurements entry point backed by dated body-measurement snapshots for weight, length, height, collar circumference, and chest circumference.
 - Ask-the-vet notes for observations and questions before appointments.
 - Shared vet providers, pet primary/secondary vet assignment, and mock vet visit logging.
 - Care-team management that combines provider assignment with saved vet/clinic add and edit actions.
@@ -24,7 +24,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Structured observation logging for behavior, symptoms, appetite, mobility, and other changes.
 - Calendar v1 with pet-specific selected-day activity, expandable month view, future care routines, date-prefilled routine creation, and next-four-weeks planning.
 - Mock care routine creation, manage-routines list, routine editing, backdated completion logging, and recurring cadence behavior.
-- Health overview with 3-by-2 shortcuts, vaccines, medications, vet care, observations, all-document access, and recent history.
+- Health overview with compact shortcut pills, vaccines, medications, vet care, observations, all-document access, and recent history.
 - Secondary filterable full-history view from Health.
 - Completion logs that preserve original due date, actual completion date, and early/on-time/late status.
 - Vaccines, medications, care logs, measurements, vet visits, notes, and document attachment concepts.

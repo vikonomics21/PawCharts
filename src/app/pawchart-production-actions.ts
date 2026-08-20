@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import type { DocumentRecordType, OwnerProfile, Pet, PetSpecies, RecordDocument, VetProvider } from "@/data/demo";
+import type { DocumentRecordType, MeasurementSnapshot, OwnerProfile, Pet, PetSpecies, RecordDocument, VetProvider } from "@/data/demo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   PET_DOCUMENT_BUCKET,
@@ -12,6 +12,7 @@ import {
   isDocumentRecordType,
   mapDocumentRowToRecordDocument,
 } from "@/lib/supabase/documents";
+import { mapMeasurementRowToSnapshot, type MeasurementRow } from "@/lib/supabase/measurements";
 import { PET_PHOTO_BUCKET, mapPetRowToPet, mapPetRowToPetWithSignedPhoto } from "@/lib/supabase/pets";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fetchVetProvidersForHousehold, mapVetProviderRow, type PawChartWorkspace } from "@/lib/supabase/workspace";
@@ -238,6 +239,84 @@ export async function updateProductionPetPhoto(formData: FormData): Promise<Pet>
   revalidatePath("/");
 
   return pet;
+}
+
+export async function createProductionMeasurementSnapshot(input: MeasurementSnapshot): Promise<MeasurementSnapshot> {
+  const { supabase, user } = await requireCurrentUser();
+  const measuredAt = input.measuredOn || new Date().toISOString().slice(0, 10);
+  const weightValue = parseOptionalNumber(input.weightValue);
+
+  if (
+    weightValue === null &&
+    parseOptionalNumber(input.bodyLengthValue) === null &&
+    parseOptionalNumber(input.heightValue) === null &&
+    parseOptionalNumber(input.collarCircumferenceValue) === null &&
+    parseOptionalNumber(input.chestCircumferenceValue) === null
+  ) {
+    throw new Error("Add at least one measurement before saving.");
+  }
+
+  const { data, error } = await supabase
+    .from("measurements")
+    .insert({
+      body_length_unit: normalizeDimensionUnit(input.bodyLengthUnit),
+      body_length_value: parseOptionalNumber(input.bodyLengthValue),
+      chest_circumference_unit: normalizeDimensionUnit(input.chestCircumferenceUnit),
+      chest_circumference_value: parseOptionalNumber(input.chestCircumferenceValue),
+      collar_circumference_unit: normalizeDimensionUnit(input.collarCircumferenceUnit),
+      collar_circumference_value: parseOptionalNumber(input.collarCircumferenceValue),
+      created_by: user.id,
+      height_unit: normalizeDimensionUnit(input.heightUnit),
+      height_value: parseOptionalNumber(input.heightValue),
+      measured_at: `${measuredAt}T12:00:00.000Z`,
+      notes: input.notes || null,
+      pet_id: input.petId,
+      weight_unit: input.weightUnit === "kg" ? "kg" : "lb",
+      weight_value: weightValue,
+    })
+    .select(
+      [
+        "id",
+        "pet_id",
+        "measured_at",
+        "weight_value",
+        "weight_unit",
+        "body_length_value",
+        "body_length_unit",
+        "height_value",
+        "height_unit",
+        "collar_circumference_value",
+        "collar_circumference_unit",
+        "chest_circumference_value",
+        "chest_circumference_unit",
+        "notes",
+        "created_at",
+      ].join(", "),
+    )
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  if (weightValue !== null) {
+    const { error: petError } = await supabase
+      .from("pets")
+      .update({
+        updated_at: new Date().toISOString(),
+        weight_unit: input.weightUnit === "kg" ? "kg" : "lb",
+        weight_value: weightValue,
+      })
+      .eq("id", input.petId);
+
+    if (petError) {
+      throw petError;
+    }
+  }
+
+  revalidatePath("/");
+
+  return mapMeasurementRowToSnapshot(data as unknown as MeasurementRow);
 }
 
 export async function uploadProductionDocument(formData: FormData): Promise<RecordDocument> {
@@ -780,6 +859,15 @@ function parseWeight(weight: string) {
     unit,
     value: value || null,
   };
+}
+
+function parseOptionalNumber(value: string | undefined) {
+  const parsed = Number(value || "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeDimensionUnit(unit: string | undefined) {
+  return unit === "cm" ? "cm" : "in";
 }
 
 function findDynamicField(pet: Pet, label: string) {

@@ -88,6 +88,24 @@ export type CareEvent = {
   custom?: boolean;
 };
 
+export type MeasurementSnapshot = {
+  id: string;
+  petId: string;
+  measuredOn: string;
+  weightValue?: string;
+  weightUnit: "lb" | "kg";
+  bodyLengthValue?: string;
+  bodyLengthUnit: "in" | "cm";
+  heightValue?: string;
+  heightUnit: "in" | "cm";
+  collarCircumferenceValue?: string;
+  collarCircumferenceUnit: "in" | "cm";
+  chestCircumferenceValue?: string;
+  chestCircumferenceUnit: "in" | "cm";
+  notes?: string;
+  createdLabel: string;
+};
+
 export type DocumentRecordType =
   | "vaccine_record"
   | "medication"
@@ -411,14 +429,14 @@ export const demoTasks: Task[] = [
   {
     id: "weight",
     petId: "luna",
-    title: "Weight check",
+    title: "Body measurements check",
     type: "measurement",
     dueDate: "2026-08-20",
     dueLabel: "This week",
-    actionLabel: "Log weight",
+    actionLabel: "Log measurements",
     cadence: "monthly",
     reminderKind: "measurement",
-    notes: "Monthly weight trend check.",
+    notes: "Monthly weight and body dimension check.",
   },
   {
     id: "flea-refill",

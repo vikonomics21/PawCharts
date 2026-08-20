@@ -103,7 +103,9 @@ This file tracks important product and technical decisions so the project does n
 - Profile snapshot should only include compact, immediately useful facts; commands, leash notes, carrier notes, and other longer context should not live in snapshot tiles.
 - Dog size and groomer cadence should not live in the compact profile snapshot; weight and care routines cover those needs better.
 - Measurements should be accessible from Pets as a compact entry point rather than expanding the profile snapshot.
-- Measurement history should allow direct weight logging from the same surface where owners review weight history.
+- Measurement history should allow direct body-measurement logging from the same surface where owners review measurement history.
+- Measurements include shopping dimensions, not only weight: body length, height, collar circumference, and chest circumference belong in dated measurement snapshots.
+- Profile snapshot should stay compact; body dimensions are reviewed through Measurements instead of becoming profile fact tiles.
 - Background/history and food preference lists should not live in the profile snapshot.
 - Dog commands should be stored as structured training cues with both a cue word and the expected pet action.
 - Training cues should show the top 3 cues in the profile summary, with the full list behind a dedicated detail view.
@@ -120,7 +122,7 @@ This file tracks important product and technical decisions so the project does n
 - Medication, bath, grooming, nail trim, flea/tick treatment, measurements, and similar tasks should be quick to log.
 - Structured observations should exist as first-class health records with category, severity, trigger, duration, medication status, notes, and date.
 - Home quick actions should not be dead ends; each action must either log immediately or open the smallest necessary form.
-- Weight logging must collect an actual weight value and unit.
+- Measurement logging must collect a dated snapshot with at least one value; weight is optional but updates the profile weight when included.
 - Medication logging should allow medication name, dose/label, notes, date, and optional prescription-label uploads.
 - Historical logs should be visible from Health through a secondary full-history view.
 - Full history should support type filters and item-level filters so owners can inspect histories such as bath dates or flea/tick medication doses without scanning unrelated records.

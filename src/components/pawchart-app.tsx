@@ -40,6 +40,7 @@ import {
   completeProductionOnboarding,
   createProductionPet,
   createProductionVetProvider,
+  createProductionMeasurementSnapshot,
   createProductionDocumentSignedUrl,
   updateProductionOwnerProfile,
   updateProductionPet,
@@ -65,6 +66,7 @@ import {
   demoVaccines,
   type CareEvent,
   type DocumentRecordType,
+  type MeasurementSnapshot,
   type ObservationRecord,
   type OwnerProfile,
   type Pet,
@@ -152,6 +154,13 @@ type LogEntry = {
   details?: string;
   value?: string;
   createdLabel: string;
+};
+
+type MeasurementFormInput = {
+  details: string;
+  measurement: MeasurementSnapshot;
+  occurredOn: string;
+  value: string;
 };
 
 type UndoSnapshot = {
@@ -256,6 +265,7 @@ export type PawChartInitialData = Partial<{
   careEvents: CareEvent[];
   documents: RecordDocument[];
   logs: LogEntry[];
+  measurements: MeasurementSnapshot[];
   observations: ObservationRecord[];
   petAccessMembers: PetAccessMember[];
   petKits: PetKit[];
@@ -337,7 +347,7 @@ const demoLogEntries: LogEntry[] = [
     petId: "luna",
     recordId: "weight",
     recordType: "measurement",
-    title: "Weight check",
+    title: "Body measurements check",
     occurredOn: "2026-05-28",
     value: "10.5 lb",
     createdLabel: "May 28",
@@ -364,10 +374,44 @@ const demoLogEntries: LogEntry[] = [
   },
 ];
 
+const demoMeasurementSnapshots: MeasurementSnapshot[] = [
+  {
+    id: "measurement-oliver-may",
+    petId: "oliver",
+    measuredOn: "2026-05-26",
+    weightValue: "22",
+    weightUnit: "lb",
+    bodyLengthValue: "19",
+    bodyLengthUnit: "in",
+    heightValue: "15",
+    heightUnit: "in",
+    collarCircumferenceValue: "13",
+    collarCircumferenceUnit: "in",
+    chestCircumferenceValue: "21",
+    chestCircumferenceUnit: "in",
+    notes: "Useful for harness sizing.",
+    createdLabel: "May 26, 2026",
+  },
+  {
+    id: "measurement-luna-may",
+    petId: "luna",
+    measuredOn: "2026-05-28",
+    weightValue: "10.5",
+    weightUnit: "lb",
+    bodyLengthUnit: "in",
+    heightUnit: "in",
+    collarCircumferenceUnit: "in",
+    chestCircumferenceUnit: "in",
+    notes: "",
+    createdLabel: "May 28, 2026",
+  },
+];
+
 const localDemoInitialData: Required<PawChartInitialData> = {
   careEvents: demoCareEvents,
   documents: demoDocuments,
   logs: demoLogEntries,
+  measurements: demoMeasurementSnapshots,
   observations: demoObservations,
   petAccessMembers: initialPetAccessMembers,
   petKits: demoPetKits,
@@ -384,6 +428,7 @@ const productionInitialData: Required<PawChartInitialData> = {
   careEvents: [],
   documents: [],
   logs: [],
+  measurements: [],
   observations: [],
   petAccessMembers: [],
   petKits: [],
@@ -458,6 +503,7 @@ export function PawChartApp({
   const [lastUndo, setLastUndo] = useState<LogEntry | null>(null);
   const [undoSnapshots, setUndoSnapshots] = useState<Record<string, UndoSnapshot>>({});
   const [logs, setLogs] = useState<LogEntry[]>(() => resolvedInitialData.logs);
+  const [measurements, setMeasurements] = useState<MeasurementSnapshot[]>(() => resolvedInitialData.measurements);
 
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? pets[0];
   const scheduledTasks = useMemo(() => tasks.filter((task) => !task.completed), [tasks]);
@@ -1098,7 +1144,28 @@ export function PawChartApp({
     setModal(null);
   }
 
-  function logTask(task: Task, input?: { occurredOn?: string; details?: string; value?: string }) {
+  async function logMeasurement(task: Task, input: MeasurementFormInput) {
+    let measurement = input.measurement;
+
+    if (!isLocalDemo) {
+      try {
+        measurement = await createProductionMeasurementSnapshot(input.measurement);
+      } catch (error) {
+        handleProductionError(error);
+        return;
+      }
+    }
+
+    setMeasurements((current) => [measurement, ...current]);
+    logTask(task, {
+      details: input.details,
+      measurement,
+      occurredOn: input.occurredOn,
+      value: measurementSnapshotSummary(measurement),
+    });
+  }
+
+  function logTask(task: Task, input?: { occurredOn?: string; details?: string; value?: string; measurement?: MeasurementSnapshot }) {
     const occurredOn = input?.occurredOn || todayValue;
     const nextDueDate = getNextDueDate(task, occurredOn);
     const petBeforeLog = pets.find((pet) => pet.id === task.petId);
@@ -1107,7 +1174,7 @@ export function PawChartApp({
       id: `log-${task.id}-${Date.now()}`,
       petId: task.petId,
       taskId: task.id,
-      recordId: task.id,
+      recordId: input?.measurement?.id ?? task.id,
       recordType: recordTypeForTask(task),
       title: task.title,
       occurredOn,
@@ -1148,9 +1215,10 @@ export function PawChartApp({
       ),
     );
 
-    if (task.type === "measurement" && input?.value) {
+    if (task.type === "measurement" && input?.measurement?.weightValue) {
+      const nextWeight = measurementWeightLabel(input.measurement);
       setPets((current) =>
-        current.map((item) => (item.id === task.petId ? { ...item, weight: input.value ?? item.weight } : item)),
+        current.map((item) => (item.id === task.petId ? { ...item, weight: nextWeight ?? item.weight } : item)),
       );
     }
 
@@ -1194,6 +1262,10 @@ export function PawChartApp({
       setPets((current) =>
         current.map((pet) => (pet.id === log.petId ? { ...pet, weight: snapshot.petWeight ?? pet.weight } : pet)),
       );
+    }
+
+    if (log.recordType === "measurement" && log.recordId) {
+      setMeasurements((current) => current.filter((measurement) => measurement.id !== log.recordId));
     }
 
     const careEventSnapshot = snapshot?.careEvent;
@@ -1965,7 +2037,7 @@ export function PawChartApp({
     }
 
     if (task.type === "measurement") {
-      setModal({ title: "Log weight", type: "weight", task });
+      setModal({ title: "Log measurements", type: "weight", task });
       return;
     }
 
@@ -1974,7 +2046,7 @@ export function PawChartApp({
 
   function handleTaskBackdate(task: Task) {
     if (task.type === "measurement") {
-      setModal({ title: "Log weight", type: "weight", task });
+      setModal({ title: "Log measurements", type: "weight", task });
       return;
     }
 
@@ -2145,8 +2217,8 @@ export function PawChartApp({
                 <PetsView
                   carryVetPrepItem={carryVetPrepItem}
                   dismissVetPrepItem={dismissVetPrepItem}
-                  logs={logs}
                   markVetPrepAddressed={markVetPrepAddressed}
+                  measurements={measurements.filter((measurement) => measurement.petId === selectedPet.id)}
                   onAddPet={() => setModal({ title: "Add pet", type: "add-pet" })}
                   onAddVetNote={() => setModal({ title: "Add vet note", type: "add-vet-note", petId: selectedPet.id })}
                   onChangeVet={() => setModal({ title: "Manage care team", type: "change-vet", pet: selectedPet })}
@@ -2232,9 +2304,9 @@ export function PawChartApp({
               if (type === "vet") setModal({ title: "Log vet visit", type: "log-vet-visit", petId: selectedPet.id });
               if (type === "measurement") {
                 setModal({
-                  title: "Log weight",
+                  title: "Log measurements",
                   type: "weight",
-                  task: createWeightTask(selectedPet.id),
+                  task: createMeasurementTask(selectedPet.id),
                 });
               }
               if (type === "document") setModal({ title: "Upload file", type: "upload-document", petId: selectedPet.id });
@@ -2447,7 +2519,7 @@ export function PawChartApp({
           />
         )}
         {modal?.type === "weight" && (
-          <WeightForm onSubmit={(input) => logTask(modal.task, input)} task={modal.task} />
+          <MeasurementForm onSubmit={(input) => void logMeasurement(modal.task, input)} task={modal.task} />
         )}
         {modal?.type === "medication" && (
           <MedicationForm
@@ -2507,8 +2579,8 @@ export function PawChartApp({
         )}
         {modal?.type === "pet-measurements" && (
           <MeasurementHistoryModal
-            logs={logs.filter((log) => log.petId === modal.petId && log.recordType === "measurement")}
-            onLogWeight={() => setModal({ title: "Log weight", type: "weight", task: createWeightTask(modal.petId) })}
+            measurements={measurements.filter((measurement) => measurement.petId === modal.petId)}
+            onLogMeasurements={() => setModal({ title: "Log measurements", type: "weight", task: createMeasurementTask(modal.petId) })}
           />
         )}
         {modal?.type === "lists-kits" && (
@@ -4421,8 +4493,8 @@ function ManageScheduleList({
 function PetsView({
   carryVetPrepItem,
   dismissVetPrepItem,
-  logs,
   markVetPrepAddressed,
+  measurements,
   onAddPet,
   onAddVetNote,
   onChangeVet,
@@ -4442,8 +4514,8 @@ function PetsView({
 }: {
   carryVetPrepItem: (itemId: string) => void;
   dismissVetPrepItem: (itemId: string) => void;
-  logs: LogEntry[];
   markVetPrepAddressed: (itemId: string) => void;
+  measurements: MeasurementSnapshot[];
   onAddPet: () => void;
   onAddVetNote: () => void;
   onChangeVet: () => void;
@@ -4461,8 +4533,7 @@ function PetsView({
   vetProviders: VetProvider[];
   vetPrepItems: VetPrepItem[];
 }) {
-  const measurementLogs = logs.filter((log) => log.petId === selectedPet.id && log.recordType === "measurement");
-  const latestMeasurement = measurementLogs[0];
+  const latestMeasurement = measurements[0];
   const openVetPrepItems = vetPrepItems.filter((item) => item.status === "open");
   const primaryVet = vetProviders.find((provider) => provider.id === selectedPet.primaryVetId);
   const secondaryVet = vetProviders.find((provider) => provider.id === selectedPet.secondaryVetId);
@@ -4535,8 +4606,8 @@ function PetsView({
                 <span className="block">Measurements</span>
                 <span className="block truncate text-xs font-medium text-muted">
                   {latestMeasurement
-                    ? `${latestMeasurement.value || "Measurement logged"} - ${latestMeasurement.createdLabel}`
-                    : "View weight and measurement history"}
+                    ? `${measurementSnapshotSummary(latestMeasurement)} - ${latestMeasurement.createdLabel}`
+                    : "View body measurement history"}
                 </span>
               </span>
               <CalendarCheck aria-hidden className="h-5 w-5 shrink-0 text-primary" />
@@ -5972,69 +6043,171 @@ function HealthDocumentsModal({
   );
 }
 
-function MeasurementHistoryModal({ logs, onLogWeight }: { logs: LogEntry[]; onLogWeight: () => void }) {
+function MeasurementHistoryModal({
+  measurements,
+  onLogMeasurements,
+}: {
+  measurements: MeasurementSnapshot[];
+  onLogMeasurements: () => void;
+}) {
+  const latestMeasurement = measurements[0];
+
   return (
     <div className="space-y-3">
       <button
         className="min-h-11 w-full rounded-lg bg-ink px-4 text-sm font-semibold text-white"
-        onClick={onLogWeight}
+        onClick={onLogMeasurements}
         type="button"
       >
-        Log weight
+        Log measurements
       </button>
-      {logs.length === 0 ? (
+      {measurements.length === 0 ? (
         <p className="rounded-lg border border-line bg-surface p-4 text-sm leading-6 text-muted">
           No measurements logged yet.
         </p>
       ) : (
-        <div className="rounded-lg border border-line bg-surface">
-          {logs.map((log, index) => (
-            <div className={cn("flex items-center justify-between gap-3 p-3", index > 0 ? "border-t border-line" : "")} key={log.id}>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">{log.value || log.title}</p>
-                <p className="mt-1 truncate text-xs text-muted">{log.createdLabel}</p>
-              </div>
-              {log.completedTiming ? (
-                <span className="shrink-0 rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted">
-                  {completionTimingLabel(log)}
+        <>
+          {latestMeasurement ? (
+            <div className="rounded-lg border border-line bg-surface p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Latest snapshot</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">{latestMeasurement.createdLabel}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-muted">
+                  {measurementValueParts(latestMeasurement).length} values
                 </span>
+              </div>
+              <MeasurementValueGrid measurement={latestMeasurement} />
+              {latestMeasurement.notes ? (
+                <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm leading-6 text-muted">{latestMeasurement.notes}</p>
               ) : null}
             </div>
-          ))}
-        </div>
+          ) : null}
+          <div className="rounded-lg border border-line bg-surface">
+            {measurements.map((measurement, index) => (
+              <div
+                className={cn("flex items-center justify-between gap-3 p-3", index > 0 ? "border-t border-line" : "")}
+                key={measurement.id}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">{measurementSnapshotSummary(measurement)}</p>
+                  <p className="mt-1 truncate text-xs text-muted">{measurement.createdLabel}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-function WeightForm({ onSubmit, task }: { onSubmit: (input: { occurredOn: string; value: string; details: string }) => void; task: Task }) {
+function MeasurementValueGrid({ measurement }: { measurement: MeasurementSnapshot }) {
+  const values = measurementValuePairs(measurement);
+
   return (
-    <form className="space-y-4" onSubmit={(event) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const weight = String(form.get("weight") || "");
-      const unit = String(form.get("unit") || "lb");
-      onSubmit({
-        occurredOn: String(form.get("occurredOn") || todayValue),
-        value: weight ? `${weight} ${unit}` : "",
-        details: String(form.get("details") || ""),
-      });
-    }}>
-      <p className="text-sm leading-6 text-muted">{task.title} needs an actual weight value.</p>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+      {values.map((item) => (
+        <div className="rounded-lg bg-white px-3 py-2" key={item.label}>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">{item.label}</p>
+          <p className="mt-1 text-sm font-semibold text-ink">{item.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MeasurementForm({ onSubmit, task }: { onSubmit: (input: MeasurementFormInput) => void; task: Task }) {
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        const measuredOn = String(form.get("measuredOn") || todayValue);
+        const measurement: MeasurementSnapshot = {
+          id: `measurement-${task.petId}-${Date.now()}`,
+          petId: task.petId,
+          measuredOn,
+          weightValue: normalizeMeasurementValue(form.get("weightValue")),
+          weightUnit: String(form.get("weightUnit") || "lb") === "kg" ? "kg" : "lb",
+          bodyLengthValue: normalizeMeasurementValue(form.get("bodyLengthValue")),
+          bodyLengthUnit: normalizeMeasurementUnit(form.get("bodyLengthUnit")),
+          heightValue: normalizeMeasurementValue(form.get("heightValue")),
+          heightUnit: normalizeMeasurementUnit(form.get("heightUnit")),
+          collarCircumferenceValue: normalizeMeasurementValue(form.get("collarCircumferenceValue")),
+          collarCircumferenceUnit: normalizeMeasurementUnit(form.get("collarCircumferenceUnit")),
+          chestCircumferenceValue: normalizeMeasurementValue(form.get("chestCircumferenceValue")),
+          chestCircumferenceUnit: normalizeMeasurementUnit(form.get("chestCircumferenceUnit")),
+          notes: String(form.get("notes") || ""),
+          createdLabel: formatDateForDisplay(measuredOn),
+        };
+
+        if (!hasMeasurementValue(measurement)) {
+          window.alert("Add at least one measurement before saving.");
+          return;
+        }
+
+        onSubmit({
+          details: measurement.notes || "",
+          measurement,
+          occurredOn: measuredOn,
+          value: measurementSnapshotSummary(measurement),
+        });
+      }}
+    >
+      <p className="text-sm leading-6 text-muted">Log a dated body snapshot for weight trends and gear sizing.</p>
+      <FormField label="Measured on" name="measuredOn" type="date" defaultValue={todayValue} />
       <div className="grid grid-cols-[1fr_92px] gap-3">
-        <FormField label="Weight" name="weight" placeholder="10.8" required type="number" />
-        <label className="block text-sm font-semibold text-ink">
-          Unit
-          <select className="mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" name="unit">
-            <option value="lb">lb</option>
-            <option value="kg">kg</option>
-          </select>
-        </label>
+        <FormField inputMode="decimal" label="Weight" name="weightValue" placeholder="22" />
+        <MeasurementUnitSelect defaultValue="lb" label="Unit" name="weightUnit" options={["lb", "kg"]} />
       </div>
-      <FormField label="Date" name="occurredOn" type="date" defaultValue={todayValue} />
-      <TextAreaField label="Notes" name="details" placeholder="Scale used, context, or trend" />
-      <SubmitButton label="Log weight" />
+      <MeasurementDimensionField label="Body length" name="bodyLengthValue" unitName="bodyLengthUnit" />
+      <MeasurementDimensionField label="Height" name="heightValue" unitName="heightUnit" />
+      <MeasurementDimensionField label="Collar circumference" name="collarCircumferenceValue" unitName="collarCircumferenceUnit" />
+      <MeasurementDimensionField label="Chest circumference" name="chestCircumferenceValue" unitName="chestCircumferenceUnit" />
+      <TextAreaField label="Notes" name="notes" placeholder="Harness size, body condition, or measuring context" />
+      <SubmitButton label="Log measurements" />
     </form>
+  );
+}
+
+function MeasurementDimensionField({ label, name, unitName }: { label: string; name: string; unitName: string }) {
+  return (
+    <div className="grid grid-cols-[1fr_92px] gap-3">
+      <FormField inputMode="decimal" label={label} name={name} placeholder="18" />
+      <MeasurementUnitSelect defaultValue="in" label="Unit" name={unitName} options={["in", "cm"]} />
+    </div>
+  );
+}
+
+function MeasurementUnitSelect({
+  defaultValue,
+  label,
+  name,
+  options,
+}: {
+  defaultValue: string;
+  label: string;
+  name: string;
+  options: string[];
+}) {
+  return (
+    <label className="block text-sm font-semibold text-ink">
+      {label}
+      <select
+        className="mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm font-medium text-ink"
+        defaultValue={defaultValue}
+        name={name}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -7706,7 +7879,7 @@ function GlobalAddMenu({
     { description: "Bath, nails, ears, grooming", icon: Check, label: "Log care", type: "care" as const },
     { description: "Behavior, symptom, appetite", icon: ClipboardList, label: "Log observation", type: "observation" as const },
     { description: "Visit, cost, services, bill", icon: HeartPulse, label: "Log vet visit", type: "vet" as const },
-    { description: "Weight or measurement", icon: CalendarCheck, label: "Log weight", type: "measurement" as const },
+    { description: "Weight, length, height, collar, chest", icon: CalendarCheck, label: "Log measurements", type: "measurement" as const },
     { description: "PDF, record, certificate, image", icon: Upload, label: "Upload file", type: "document" as const },
   ];
 
@@ -7989,6 +8162,47 @@ function taskVisualKind(task: Task): TaskVisualKind {
   return "care";
 }
 
+function measurementValuePairs(measurement: MeasurementSnapshot) {
+  return [
+    measurementValuePair("Weight", measurement.weightValue, measurement.weightUnit),
+    measurementValuePair("Length", measurement.bodyLengthValue, measurement.bodyLengthUnit),
+    measurementValuePair("Height", measurement.heightValue, measurement.heightUnit),
+    measurementValuePair("Collar", measurement.collarCircumferenceValue, measurement.collarCircumferenceUnit),
+    measurementValuePair("Chest", measurement.chestCircumferenceValue, measurement.chestCircumferenceUnit),
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+}
+
+function measurementValueParts(measurement: MeasurementSnapshot) {
+  return measurementValuePairs(measurement).map((item) => `${item.label} ${item.value}`);
+}
+
+function measurementSnapshotSummary(measurement: MeasurementSnapshot) {
+  return measurementValueParts(measurement).join(" · ") || "Measurements logged";
+}
+
+function measurementWeightLabel(measurement: MeasurementSnapshot) {
+  return measurement.weightValue ? `${measurement.weightValue} ${measurement.weightUnit}` : undefined;
+}
+
+function hasMeasurementValue(measurement: MeasurementSnapshot) {
+  return measurementValuePairs(measurement).length > 0;
+}
+
+function measurementValuePair(label: string, value: string | undefined, unit: string | undefined) {
+  return value ? { label, value: `${value} ${unit}` } : null;
+}
+
+function normalizeMeasurementValue(value: FormDataEntryValue | null) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? normalized : undefined;
+}
+
+function normalizeMeasurementUnit(value: FormDataEntryValue | null): "in" | "cm" {
+  return value === "cm" ? "cm" : "in";
+}
+
 function taskTypeLabel(type: Task["type"]) {
   if (type === "medication") return "Medication";
   if (type === "refill") return "Refill";
@@ -8011,7 +8225,7 @@ function defaultActionLabel(type: Task["type"]) {
   if (type === "medication") return "Log dose";
   if (type === "refill") return "Refilled";
   if (type === "vaccine") return "Review";
-  if (type === "measurement") return "Log weight";
+  if (type === "measurement") return "Log measurements";
   return "Done";
 }
 
@@ -8019,7 +8233,7 @@ function taskActionLabel(task: Task) {
   if (task.type === "medication") return "Log dose";
   if (task.type === "refill") return "Refilled";
   if (task.type === "vaccine") return "Review";
-  if (task.type === "measurement") return "Log weight";
+  if (task.type === "measurement") return "Log measurements";
   return "Done";
 }
 
@@ -8027,14 +8241,14 @@ function prescribedRoutineActionLabel(kind: Task["reminderKind"]) {
   if (kind === "medication") return "Log dose";
   if (kind === "refill") return "Refilled";
   if (kind === "vaccine") return "Review";
-  if (kind === "measurement") return "Log weight";
+  if (kind === "measurement") return "Log measurements";
   return "Done";
 }
 
 function routineDateLabel(kind: Task["reminderKind"]) {
   if (kind === "refill") return "Refill by date";
   if (kind === "vaccine") return "Due / review date";
-  if (kind === "measurement") return "Next weigh-in";
+  if (kind === "measurement") return "Next measurement";
   if (kind === "vet-appointment") return "Appointment date";
   if (kind === "vet-follow-up") return "Follow-up date";
   return "Next due date";
@@ -8053,7 +8267,7 @@ function routineTitlePlaceholder(kind: Task["reminderKind"]) {
   if (kind === "medication") return "NexGard";
   if (kind === "refill") return "Heartgard prescription";
   if (kind === "vaccine") return "Rabies";
-  if (kind === "measurement") return "Weight check";
+  if (kind === "measurement") return "Body measurements check";
   if (kind === "vet-appointment") return "Annual wellness exam";
   if (kind === "vet-follow-up") return "Skin follow-up";
   return "Bath";
@@ -8105,7 +8319,7 @@ function defaultScheduleTitle(kind: Task["reminderKind"]) {
   if (kind === "medication") return "Medication dose";
   if (kind === "refill") return "Medication refill";
   if (kind === "vaccine") return "Vaccine reminder";
-  if (kind === "measurement") return "Weight check";
+  if (kind === "measurement") return "Body measurements check";
   if (kind === "vet-appointment") return "Vet appointment";
   if (kind === "vet-follow-up") return "Vet follow-up";
   return "Routine care";
@@ -8130,18 +8344,18 @@ function reminderKindLabel(kind: Task["reminderKind"]) {
   return "Care";
 }
 
-function createWeightTask(petId: string): Task {
+function createMeasurementTask(petId: string): Task {
   return {
-    id: `weight-${petId}`,
+    id: `measurement-${petId}`,
     petId,
-    title: "Weight check",
+    title: "Body measurements check",
     type: "measurement",
     dueDate: todayValue,
     dueLabel: "Ready",
-    actionLabel: "Log weight",
+    actionLabel: "Log measurements",
     cadence: "once",
     reminderKind: "measurement",
-    notes: "",
+    notes: "Log weight, length, height, collar, and chest dimensions.",
   };
 }
 

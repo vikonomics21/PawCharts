@@ -80,7 +80,7 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 
 ## Forms And Modals
 
-- Modal titles should be specific, such as `Add pet`, `Edit Oliver`, `Add vaccine`, `Add medication`, `Log dose`, `Log weight`, `Add care routine`, `Edit routine`, and `Upload document`.
+- Modal titles should be specific, such as `Add pet`, `Edit Oliver`, `Add vaccine`, `Add medication`, `Log dose`, `Log measurements`, `Add care routine`, `Edit routine`, and `Upload document`.
 - Use `Add vet note` for observations or questions intended for the next appointment.
 - Prefer section-level edit actions in Pets over one large profile form.
 - Add Pet should stay lightweight; deeper profile context should be added through section-level edits.
@@ -98,7 +98,8 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Date-only care actions should support one-tap logging.
 - Execution-heavy cards in Home, Calendar, notifications, and Health should use compact 44px icon controls for done/check, log for another date, attach, edit, and delete.
 - Put secondary log-date actions to the left and primary done/check actions on the right.
-- Actions that need a value, such as weight, should open the smallest necessary form.
+- Actions that need a value, such as measurements, should open the smallest necessary form.
+- Measurement logging should capture a dated snapshot of weight, body length, height, collar circumference, and chest circumference while keeping each value optional.
 - Medication setup should store brand, dose, label, and cadence on the care routine. Medication backfill logging should allow date, notes, and optional prescription-label upload.
 - Observation logging should support lightweight structured capture: category, severity, trigger, duration, medication status, notes, and date.
 - After quick logging, show an undo affordance during the current interaction.
@@ -162,7 +163,8 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - `Food preferences` belongs near Care preferences.
 - Food preferences should render as scannable chips or compact rows.
 - Measurements should be accessible from Pets through a compact entry point, not by expanding the profile snapshot.
-- Measurement history should include a direct `Log weight` action.
+- Measurement history should include a direct `Log measurements` action.
+- Body dimensions should remain in the Measurements detail/history surface and not expand the compact profile snapshot.
 - Sharing/access should summarize first and move detailed member/share-link controls behind one manage action.
 
 ## Lists And Kits
