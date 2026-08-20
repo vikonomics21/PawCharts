@@ -56,6 +56,11 @@ This file tracks important product and technical decisions so the project does n
 ## MVP Scope
 
 - Start with mock/demo data so the product can be tested before Supabase and auth are connected.
+- The rich mock dataset is a local-only product/design sandbox. Production must not initialize users with demo pets, demo records, demo documents, demo share links, or fake household access.
+- Production signed-out users should see authentication before onboarding. Production signed-in users should load Supabase-backed initial data as each persistence boundary is migrated.
+- Generic starter templates can exist in production because they are product scaffolding, not user-owned demo records.
+- Private beta production readiness starts with persistent onboarding, owner profile, household creation, Pets, training cues, vet providers, and care-team assignment.
+- `/support` is a read-only internal beta support page gated by `ADMIN_EMAILS`; full admin data mutation is intentionally deferred.
 - Build the product workflow before implementing auth.
 - Support dogs and cats first.
 - Support multiple pets per household from day one.
@@ -202,6 +207,26 @@ This file tracks important product and technical decisions so the project does n
 - Visible sharing/access actions should be functional in mock state, not static placeholders.
 - Household access is pet-specific in the prototype, with Admin, Editor, and Viewer roles.
 
+## Lists And Kits
+
+- Lists & kits belongs primarily on Home because it is a frequent reference workflow; Pets should stay profile-oriented.
+- Travel is one use case, not the boundary of the feature; users can create blank/custom lists.
+- Dated lists can surface prep tasks in Home and Calendar; undated lists stay in Home/Lists & kits but do not create calendar items.
+- Kit document bundles link to existing records/documents instead of duplicating files.
+- Kit documents remain private by default and are not added to public share links automatically.
+- Resource links on checklist items should store a short label and URL separately so long URLs do not break mobile layouts.
+- PawChart should use language like `suggested documents` and remind owners to confirm current airline, destination, and veterinarian requirements; v1 is not official travel-compliance advice.
+- Home attention rows should be actionable navigation rows that take the owner to the relevant Health, Calendar, or Lists & kits workflow.
+- Record documents are append-only/versioned in the product model. New vaccine proof creates a newer version, surfaces as latest proof, and keeps older files accessible.
+- Lists & kits should use one unified item list. Documents are checklist item types alongside tasks and links, not a separate packet UI with its own controls.
+- Reusable lists can be reset by clearing completion state only; attached documents, links, notes, and list structure stay saved.
+- First-time onboarding should be manual-first and quick: owner basics, pet basics, and optional mocked record upload after the pet exists. AI parsing remains a later enhancement.
+- Single-pet households should not see pet switchers where there is only one possible selection.
+- Lists & kits task rows should not repeat `Task` labels; task is the default row type and can stay visually quiet.
+- Lists & kits progress copy should stay compact, such as `1/5` and `1 doc`, instead of long badges that force title wrapping.
+- Created lists are user-owned and editable; reusable templates are immutable starters and are not changed after list creation.
+- Deleting a list or list item removes only that list structure. Attached documents, source records, pet records, and logs stay saved.
+
 ## Technical Direction
 
 - Use Next.js 14 App Router.
@@ -209,12 +234,13 @@ This file tracks important product and technical decisions so the project does n
 - Use Shadcn-style local UI components and Lucide icons.
 - Use Supabase for database, auth, storage, and edge functions.
 - Supabase credentials belong only in local or hosted environment variables, never tracked source files.
+- `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` is server-only and may be used only after authenticated server-side checks, such as onboarding bootstrap or allowlisted read-only support.
 - The initial Supabase schema has been pushed from `supabase/migrations/0001_initial_schema.sql`.
 - Use Supabase migration files as the source of truth for database structure.
 - Use row-level security for household data isolation.
 - Keep the UI on mock data initially and connect real persistence screen by screen.
-- Pets are the first persistence boundary: Supabase read/write helpers map database rows into the current `Pet` UI model, but the visible app stays mock-backed until auth creates an RLS-visible user session.
-- Google sign-in can establish a real Supabase session before pet persistence is migrated; mock pet data remains the active product data until each screen moves to Supabase.
+- Pets are the first persistence boundary: Supabase read/write helpers map database rows into the current `Pet` UI model, and production can receive real pets while other workflows are migrated screen by screen.
+- Google sign-in establishes a real Supabase session. Local development may still use mock pet data, but production must not use mock data as the active product data.
 - Service worker registration should run in production only during development to avoid stale local caches.
 - Keep architecture simple for a solo founder project.
 

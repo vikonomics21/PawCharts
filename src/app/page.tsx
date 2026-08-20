@@ -1,31 +1,59 @@
-import { PawChartApp } from "@/components/pawchart-app";
-import { demoOwnerProfile, type OwnerProfile } from "@/data/demo";
+import { PawChartApp, type PawChartDataMode, type PawChartInitialData } from "@/components/pawchart-app";
+import type { OwnerProfile } from "@/data/demo";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchProductionWorkspace, type PawChartWorkspace } from "@/lib/supabase/workspace";
 
 export default async function Home() {
+  const appMode: PawChartDataMode = process.env.NODE_ENV === "production" ? "production" : "local-demo";
+  const hasSupabaseEnv = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
+
+  let authEmail: string | null = null;
+  let initialData: PawChartInitialData | undefined;
+  let isAuthenticated = false;
+  let ownerProfile: OwnerProfile | undefined;
+  let workspace: PawChartWorkspace | undefined;
+
+  if (!hasSupabaseEnv) {
+    if (appMode === "production") {
+      throw new Error("Missing Supabase environment variables for production.");
+    }
+
+    return <PawChartApp appMode={appMode} />;
+  }
+
   const supabase = createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  let ownerProfile: OwnerProfile | undefined;
-
   if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id, email, first_name, last_name, phone, city")
-      .eq("id", user.id)
-      .maybeSingle();
+    authEmail = user.email ?? null;
+    isAuthenticated = true;
 
-    ownerProfile = {
-      id: user.id,
-      firstName: profile?.first_name ?? user.user_metadata?.first_name ?? user.user_metadata?.name?.split(" ")[0] ?? demoOwnerProfile.firstName,
-      lastName: profile?.last_name ?? user.user_metadata?.last_name ?? "",
-      email: profile?.email ?? user.email ?? "",
-      phone: profile?.phone ?? "",
-      city: profile?.city ?? "",
-    };
+    if (appMode === "production") {
+      try {
+        const productionWorkspace = await fetchProductionWorkspace(supabase, user);
+        ownerProfile = productionWorkspace.ownerProfile;
+        initialData = {
+          pets: productionWorkspace.pets,
+          vetProviders: productionWorkspace.vetProviders,
+        };
+        workspace = productionWorkspace.workspace;
+      } catch (error) {
+        console.error("Failed to load Supabase workspace for the current user.", error);
+        initialData = { pets: [] };
+      }
+    }
   }
 
-  return <PawChartApp authEmail={user?.email ?? null} initialOwnerProfile={ownerProfile} isAuthenticated={Boolean(user)} />;
+  return (
+    <PawChartApp
+      appMode={appMode}
+      authEmail={authEmail}
+      initialData={initialData}
+      initialOwnerProfile={ownerProfile}
+      isAuthenticated={isAuthenticated}
+      workspace={workspace}
+    />
+  );
 }

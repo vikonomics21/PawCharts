@@ -1,0 +1,494 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+
+import type { OwnerProfile, Pet, PetSpecies, VetProvider } from "@/data/demo";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { mapPetRowToPet } from "@/lib/supabase/pets";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchVetProvidersForHousehold, mapVetProviderRow, type PawChartWorkspace } from "@/lib/supabase/workspace";
+
+export type ProductionOnboardingInput = {
+  ageLabel: string;
+  breed: string;
+  city: string;
+  email: string;
+  firstName: string;
+  petName: string;
+  species: PetSpecies;
+  weight: string;
+};
+
+export type AddPetActionInput = {
+  ageLabel: string;
+  behaviorNotes: string;
+  breed: string;
+  name: string;
+  species: PetSpecies;
+  weight: string;
+};
+
+export type VetProviderActionInput = Omit<VetProvider, "householdId" | "id">;
+
+type HouseholdMembershipRow = {
+  id: string;
+  household_id: string;
+  role: "owner" | "admin" | "member";
+  households: {
+    id: string;
+    name: string;
+  } | null;
+};
+
+type PetWithCuesRow = Parameters<typeof mapPetRowToPet>[0];
+
+export async function completeProductionOnboarding(input: ProductionOnboardingInput): Promise<{
+  ownerProfile: OwnerProfile;
+  pet: Pet;
+  vetProviders: VetProvider[];
+  workspace: PawChartWorkspace;
+}> {
+  const { user } = await requireCurrentUser();
+  const admin = createSupabaseAdminClient();
+  const existingMembership = await fetchCurrentHouseholdMembership();
+
+  const ownerProfile = await upsertProfileForUser(user.id, {
+    city: input.city,
+    email: input.email || user.email || "",
+    firstName: input.firstName,
+    lastName: "",
+    phone: "",
+  });
+
+  const household =
+    existingMembership?.households ??
+    (await createHouseholdForUser(user.id, ownerProfile.firstName || input.petName || "My"));
+  const membership =
+    existingMembership ??
+    (await createOwnerMembershipForUser(household.id, user.id));
+
+  const pet = await insertPet(admin, {
+    ageLabel: input.ageLabel,
+    behaviorNotes: "",
+    breed: input.breed,
+    householdId: household.id,
+    name: input.petName || "New pet",
+    species: input.species,
+    weight: input.weight,
+  });
+
+  revalidatePath("/");
+
+  return {
+    ownerProfile,
+    pet,
+    vetProviders: await fetchVetProvidersForHousehold(admin, household.id),
+    workspace: {
+      household,
+      householdMembership: {
+        id: membership.id,
+        householdId: membership.household_id,
+        role: membership.role,
+      },
+    },
+  };
+}
+
+export async function updateProductionOwnerProfile(input: OwnerProfile): Promise<OwnerProfile> {
+  const { user } = await requireCurrentUser();
+  const ownerProfile = await upsertProfileForUser(user.id, input);
+
+  revalidatePath("/");
+
+  return ownerProfile;
+}
+
+export async function createProductionPet(input: AddPetActionInput): Promise<Pet> {
+  const { membership } = await requireCurrentHouseholdMembership();
+  const supabase = createSupabaseServerClient();
+  const pet = await insertPet(supabase, {
+    ...input,
+    householdId: membership.household_id,
+  });
+
+  revalidatePath("/");
+
+  return pet;
+}
+
+export async function updateProductionPet(input: Pet): Promise<Pet> {
+  const supabase = createSupabaseServerClient();
+  const age = parseAgeLabel(input.ageLabel);
+  const weight = parseWeight(input.weight);
+  const dogSize = findDynamicField(input, "Size");
+  const dogGroomer = findDynamicField(input, "Groomer");
+  const catLifestyle = findDynamicField(input, "Lifestyle");
+  const catLitter = findDynamicField(input, "Litter");
+
+  const { data, error } = await supabase
+    .from("pets")
+    .update({
+      adoption_date: normalizeEmptyDate(input.background.adoptionDate),
+      adoption_place: input.background.adoptionPlace || null,
+      age_is_estimated: input.ageEstimated,
+      approximate_age_months: age.months,
+      approximate_age_years: age.years,
+      behavior_notes: input.behaviorNotes,
+      breed: input.breed || null,
+      care_notes: input.careNotes,
+      cat_lifestyle: input.species === "cat" ? catLifestyle : null,
+      cat_litter_preference: input.species === "cat" ? catLitter : null,
+      disliked_foods: input.foodPreferences.dislikes,
+      dog_groomer_notes: input.species === "dog" ? dogGroomer : null,
+      dog_size: input.species === "dog" ? dogSize : null,
+      favorite_foods: input.foodPreferences.favorites,
+      feeding_rules: input.foodPreferences.rules,
+      known_history: input.background.knownHistory,
+      medical_notes: input.medicalNotes,
+      microchip_number: input.background.microchipNumber || null,
+      microchipped: input.background.microchipped,
+      name: input.name,
+      primary_vet_provider_id: input.primaryVetId || null,
+      secondary_vet_provider_id: input.secondaryVetId || null,
+      secondary_vet_role: input.secondaryVetRole || null,
+      sex: input.sex,
+      spayed_or_neutered: input.background.spayedNeutered,
+      updated_at: new Date().toISOString(),
+      weight_unit: weight.unit,
+      weight_value: weight.value,
+    })
+    .eq("id", input.id)
+    .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  await replaceTrainingCues(input.id, input.trainingCues ?? []);
+  const pet = await fetchPetById(input.id);
+
+  revalidatePath("/");
+
+  return pet ?? mapPetRowToPet(data as PetWithCuesRow);
+}
+
+export async function createProductionVetProvider(input: VetProviderActionInput): Promise<VetProvider> {
+  const {
+    membership: { household_id: householdId },
+  } = await requireCurrentHouseholdMembership();
+  const { user } = await requireCurrentUser();
+  const supabase = createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("vet_providers")
+    .insert({
+      address: input.address || null,
+      created_by: user.id,
+      household_id: householdId,
+      name: input.name || "New vet or clinic",
+      notes: input.notes || null,
+      phone: input.phone || null,
+      website: input.website || null,
+    })
+    .select("id, household_id, name, phone, address, website, notes")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+
+  return mapVetProviderRow(data);
+}
+
+export async function updateProductionVetProvider(input: VetProvider): Promise<VetProvider> {
+  const supabase = createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("vet_providers")
+    .update({
+      address: input.address || null,
+      name: input.name,
+      notes: input.notes || null,
+      phone: input.phone || null,
+      updated_at: new Date().toISOString(),
+      website: input.website || null,
+    })
+    .eq("id", input.id)
+    .select("id, household_id, name, phone, address, website, notes")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+
+  return mapVetProviderRow(data);
+}
+
+export async function updateProductionPetCareTeam(input: {
+  petId: string;
+  primaryVetId: string;
+  secondaryVetId: string;
+  secondaryVetRole: string;
+}): Promise<Pet> {
+  const supabase = createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("pets")
+    .update({
+      primary_vet_provider_id: input.primaryVetId || null,
+      secondary_vet_provider_id: input.secondaryVetId || null,
+      secondary_vet_role: input.secondaryVetRole || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.petId);
+
+  if (error) {
+    throw error;
+  }
+
+  const pet = await fetchPetById(input.petId);
+
+  if (!pet) {
+    throw new Error("Pet care team was saved, but the updated pet could not be loaded.");
+  }
+
+  revalidatePath("/");
+
+  return pet;
+}
+
+async function requireCurrentUser() {
+  const supabase = createSupabaseServerClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!user) {
+    throw new Error("You must be signed in.");
+  }
+
+  return { supabase, user };
+}
+
+async function requireCurrentHouseholdMembership() {
+  const membership = await fetchCurrentHouseholdMembership();
+
+  if (!membership) {
+    throw new Error("Create your first pet before adding more records.");
+  }
+
+  return { membership };
+}
+
+async function fetchCurrentHouseholdMembership() {
+  const {
+    supabase,
+    user,
+  } = await requireCurrentUser();
+
+  const { data, error } = await supabase
+    .from("household_members")
+    .select("id, household_id, role, households(id, name)")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as HouseholdMembershipRow | null;
+}
+
+async function upsertProfileForUser(userId: string, input: OwnerProfile | Omit<OwnerProfile, "id">) {
+  const admin = createSupabaseAdminClient();
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+
+  const { data, error } = await admin
+    .from("profiles")
+    .upsert({
+      city: input.city.trim() || null,
+      email: input.email.trim() || null,
+      first_name: firstName || null,
+      full_name: [firstName, lastName].filter(Boolean).join(" ") || null,
+      id: userId,
+      last_name: lastName || null,
+      phone: input.phone.trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .select("id, email, first_name, last_name, phone, city")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    city: data.city ?? "",
+    email: data.email ?? "",
+    firstName: data.first_name ?? "",
+    id: data.id,
+    lastName: data.last_name ?? "",
+    phone: data.phone ?? "",
+  } satisfies OwnerProfile;
+}
+
+async function createHouseholdForUser(userId: string, ownerName: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("households")
+    .insert({
+      created_by: userId,
+      name: `${ownerName.trim() || "My"} household`,
+    })
+    .select("id, name")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as { id: string; name: string };
+}
+
+async function createOwnerMembershipForUser(householdId: string, userId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("household_members")
+    .insert({
+      household_id: householdId,
+      role: "owner",
+      user_id: userId,
+    })
+    .select("id, household_id, role")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as { id: string; household_id: string; role: "owner" };
+}
+
+async function insertPet(
+  supabase: ReturnType<typeof createSupabaseServerClient> | ReturnType<typeof createSupabaseAdminClient>,
+  input: AddPetActionInput & { householdId: string },
+) {
+  const age = parseAgeLabel(input.ageLabel);
+  const weight = parseWeight(input.weight);
+
+  const { data, error } = await supabase
+    .from("pets")
+    .insert({
+      age_is_estimated: true,
+      approximate_age_months: age.months,
+      approximate_age_years: age.years,
+      behavior_notes: input.behaviorNotes || "",
+      breed: input.breed || null,
+      household_id: input.householdId,
+      name: input.name || "New pet",
+      species: input.species,
+      weight_unit: weight.unit,
+      weight_value: weight.value,
+    })
+    .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  if (input.species === "dog") {
+    await replaceTrainingCues(data.id, [
+      { action: "Sits and waits for release", cue: "Sit" },
+      { action: "Touches nose to hand", cue: "Touch" },
+      { action: "Holds position until released", cue: "Stay" },
+    ]);
+    const pet = await fetchPetById(data.id);
+    if (pet) return pet;
+  }
+
+  return mapPetRowToPet(data as PetWithCuesRow);
+}
+
+async function replaceTrainingCues(petId: string, cues: { cue: string; action: string }[]) {
+  const { supabase, user } = await requireCurrentUser();
+  const { error: deleteError } = await supabase.from("pet_training_cues").delete().eq("pet_id", petId);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  if (cues.length === 0) {
+    return;
+  }
+
+  const { error: insertError } = await supabase.from("pet_training_cues").insert(
+    cues.map((cue, index) => ({
+      action: cue.action,
+      created_by: user.id,
+      cue: cue.cue,
+      pet_id: petId,
+      sort_order: index,
+    })),
+  );
+
+  if (insertError) {
+    throw insertError;
+  }
+}
+
+async function fetchPetById(petId: string) {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("pets")
+    .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
+    .eq("id", petId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? mapPetRowToPet(data as PetWithCuesRow) : null;
+}
+
+function parseAgeLabel(label: string) {
+  const years = Number(label.match(/(\d+)\s*(?:year|yr)/i)?.[1] ?? 0);
+  const months = Number(label.match(/(\d+)\s*(?:month|mo)/i)?.[1] ?? 0);
+
+  return {
+    months: months || null,
+    years: years || null,
+  };
+}
+
+function parseWeight(weight: string) {
+  const value = Number(weight.match(/(\d+(?:\.\d+)?)/)?.[1] ?? 0);
+  const unit = weight.toLowerCase().includes("kg") ? "kg" : "lb";
+
+  return {
+    unit,
+    value: value || null,
+  };
+}
+
+function findDynamicField(pet: Pet, label: string) {
+  return pet.dynamicFields.find((field) => field.label.toLowerCase() === label.toLowerCase())?.value || null;
+}
+
+function normalizeEmptyDate(value: string) {
+  return value.trim() ? value : null;
+}

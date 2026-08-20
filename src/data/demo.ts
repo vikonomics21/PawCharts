@@ -97,15 +97,92 @@ export type DocumentRecordType =
   | "pet";
 
 export type RecordDocument = {
+  createdAt: string;
+  documentGroupId: string;
   id: string;
   petId: string;
   recordType: DocumentRecordType;
   recordId: string;
+  supersededById?: string;
   title: string;
   fileType: "pdf" | "image";
   sizeLabel: string;
   addedLabel: string;
   privateByDefault: boolean;
+  versionLabel: string;
+};
+
+export type KitChecklistItem = {
+  id: string;
+  label: string;
+  completed: boolean;
+  itemType?: "task" | "document" | "link";
+  petId?: string;
+  documentId?: string;
+  recordType?: DocumentRecordType;
+  recordId?: string;
+  documentType?:
+    | "rabies-proof"
+    | "vaccination-records"
+    | "registration"
+    | "microchip-info"
+    | "health-certificate"
+    | "airline-forms"
+    | "insurance"
+    | "custom";
+  expiresOn?: string;
+  resourceLabel?: string;
+  resourceUrl?: string;
+};
+
+export type KitDocumentStatus =
+  | "attached"
+  | "missing"
+  | "expires-before-trip"
+  | "renewal-recommended"
+  | "current";
+
+export type KitDocumentLink = {
+  id: string;
+  petId: string;
+  documentId?: string;
+  recordType?: DocumentRecordType;
+  recordId?: string;
+  label: string;
+  documentType:
+    | "rabies-proof"
+    | "vaccination-records"
+    | "registration"
+    | "microchip-info"
+    | "health-certificate"
+    | "airline-forms"
+    | "insurance"
+    | "custom";
+  status: KitDocumentStatus;
+  completed?: boolean;
+  expiresOn?: string;
+  renewalLeadDays?: number;
+};
+
+export type KitTemplate = {
+  id: string;
+  name: string;
+  category: "custom" | "flight" | "road" | "outing";
+  checklistItems: KitChecklistItem[];
+  suggestedDocumentTypes: KitDocumentLink["documentType"][];
+};
+
+export type PetKit = {
+  id: string;
+  title: string;
+  destination?: string;
+  startDate?: string;
+  endDate?: string;
+  petIds: string[];
+  sourceTemplateId: string;
+  checklistItems: KitChecklistItem[];
+  documentLinks: KitDocumentLink[];
+  notes: string;
 };
 
 export type ObservationRecord = {
@@ -511,6 +588,8 @@ export const demoCareEvents: CareEvent[] = [
 
 export const demoDocuments: RecordDocument[] = [
   {
+    createdAt: "2025-01-18T12:00:00.000Z",
+    documentGroupId: "vaccine_record:v1:rabies-proof",
     id: "doc-rabies-cert",
     petId: "oliver",
     recordType: "vaccine_record",
@@ -520,8 +599,11 @@ export const demoDocuments: RecordDocument[] = [
     sizeLabel: "428 KB",
     addedLabel: "Jan 18",
     privateByDefault: true,
+    versionLabel: "Latest",
   },
   {
+    createdAt: "2025-03-04T12:00:00.000Z",
+    documentGroupId: "vaccine_record:v2:dhpp-proof",
     id: "doc-dhpp-photo",
     petId: "oliver",
     recordType: "vaccine_record",
@@ -531,8 +613,11 @@ export const demoDocuments: RecordDocument[] = [
     sizeLabel: "1.2 MB",
     addedLabel: "Mar 04",
     privateByDefault: true,
+    versionLabel: "Latest",
   },
   {
+    createdAt: "2026-05-15T12:00:00.000Z",
+    documentGroupId: "care_event:ears:photos",
     id: "doc-ear-photo",
     petId: "luna",
     recordType: "care_event",
@@ -542,8 +627,11 @@ export const demoDocuments: RecordDocument[] = [
     sizeLabel: "844 KB",
     addedLabel: "Custom event",
     privateByDefault: true,
+    versionLabel: "Latest",
   },
   {
+    createdAt: "2026-04-18T12:00:00.000Z",
+    documentGroupId: "vet_visit:visit-oliver-allergy:bill",
     id: "doc-oliver-allergy-bill",
     petId: "oliver",
     recordType: "vet_visit",
@@ -553,8 +641,11 @@ export const demoDocuments: RecordDocument[] = [
     sizeLabel: "612 KB",
     addedLabel: "Apr 18",
     privateByDefault: true,
+    versionLabel: "Latest",
   },
   {
+    createdAt: "2026-03-12T12:00:00.000Z",
+    documentGroupId: "vet_visit:visit-luna-wellness:bill",
     id: "doc-luna-wellness-bill",
     petId: "luna",
     recordType: "vet_visit",
@@ -564,6 +655,179 @@ export const demoDocuments: RecordDocument[] = [
     sizeLabel: "1.4 MB",
     addedLabel: "Mar 12",
     privateByDefault: true,
+    versionLabel: "Latest",
+  },
+];
+
+export const demoKitTemplates: KitTemplate[] = [
+  {
+    id: "template-blank",
+    name: "Blank list",
+    category: "custom",
+    checklistItems: [],
+    suggestedDocumentTypes: [],
+  },
+  {
+    id: "template-domestic-flight",
+    name: "Domestic flight",
+    category: "flight",
+    checklistItems: [
+      { id: "dom-carrier", label: "Confirm airline carrier dimensions", completed: false },
+      { id: "dom-food", label: "Pack labeled meals and treats", completed: false },
+      { id: "dom-potty", label: "Pack potty pads and cleanup wipes", completed: false },
+    ],
+    suggestedDocumentTypes: ["rabies-proof", "vaccination-records", "airline-forms"],
+  },
+  {
+    id: "template-international-flight",
+    name: "International flight",
+    category: "flight",
+    checklistItems: [
+      {
+        id: "intl-usda",
+        label: "Review USDA/export paperwork",
+        completed: false,
+        resourceLabel: "USDA pet travel",
+        resourceUrl: "https://www.aphis.usda.gov/pet-travel",
+      },
+      { id: "intl-health-cert", label: "Book health certificate appointment", completed: false },
+      { id: "intl-airline", label: "Confirm airline pet rules", completed: false },
+      { id: "intl-food", label: "Pack food, treats, and medication in carry-on", completed: false },
+    ],
+    suggestedDocumentTypes: [
+      "rabies-proof",
+      "vaccination-records",
+      "microchip-info",
+      "health-certificate",
+      "airline-forms",
+      "insurance",
+    ],
+  },
+  {
+    id: "template-road-trip",
+    name: "Road trip",
+    category: "road",
+    checklistItems: [
+      { id: "road-harness", label: "Pack car harness or crate", completed: false },
+      { id: "road-water", label: "Pack water bowl and extra water", completed: false },
+      { id: "road-meds", label: "Pack medication and refill buffer", completed: false },
+    ],
+    suggestedDocumentTypes: ["rabies-proof", "vaccination-records", "insurance"],
+  },
+  {
+    id: "template-picnic",
+    name: "Picnic day",
+    category: "outing",
+    checklistItems: [
+      { id: "picnic-water", label: "Water bowl and treats", completed: false },
+      { id: "picnic-leash", label: "Leash, long line, and cleanup bags", completed: false },
+      { id: "picnic-mat", label: "Cooling mat or blanket", completed: false },
+    ],
+    suggestedDocumentTypes: ["rabies-proof"],
+  },
+];
+
+export const demoPetKits: PetKit[] = [
+  {
+    id: "trip-mexico-city",
+    title: "Mexico City flight",
+    destination: "Mexico City",
+    startDate: "2026-09-12",
+    endDate: "2026-09-20",
+    petIds: ["oliver"],
+    sourceTemplateId: "template-international-flight",
+    checklistItems: [
+      {
+        id: "trip-mx-usda",
+        label: "Review USDA/export paperwork",
+        completed: false,
+        resourceLabel: "USDA paperwork",
+        resourceUrl: "https://www.aphis.usda.gov/pet-travel",
+      },
+      { id: "trip-mx-health-cert", label: "Book health certificate appointment", completed: false },
+      { id: "trip-mx-carrier", label: "Confirm carrier fits airline dimensions", completed: true },
+      { id: "trip-mx-food", label: "Pack food, treats, and NexGard", completed: false },
+    ],
+    documentLinks: [
+      {
+        id: "trip-mx-rabies",
+        petId: "oliver",
+        documentId: "doc-rabies-cert",
+        recordType: "vaccine_record",
+        recordId: "v1",
+        label: "Rabies proof",
+        documentType: "rabies-proof",
+        status: "current",
+        expiresOn: "2028-01-18",
+        renewalLeadDays: 30,
+      },
+      {
+        id: "trip-mx-vaccines",
+        petId: "oliver",
+        documentId: "doc-dhpp-photo",
+        recordType: "vaccine_record",
+        recordId: "v2",
+        label: "Vaccination records",
+        documentType: "vaccination-records",
+        status: "renewal-recommended",
+        expiresOn: "2026-09-12",
+        renewalLeadDays: 30,
+      },
+      {
+        id: "trip-mx-health-cert-doc",
+        petId: "oliver",
+        label: "Health certificate",
+        documentType: "health-certificate",
+        status: "missing",
+        renewalLeadDays: 14,
+      },
+      {
+        id: "trip-mx-airline-forms",
+        petId: "oliver",
+        label: "Airline forms",
+        documentType: "airline-forms",
+        status: "missing",
+        renewalLeadDays: 14,
+      },
+    ],
+    notes: "Confirm current airline, destination, and veterinarian requirements before booking.",
+  },
+  {
+    id: "trip-golden-gate-picnic",
+    title: "Golden Gate picnic",
+    destination: "Golden Gate Park",
+    startDate: "2026-08-23",
+    endDate: "2026-08-23",
+    petIds: ["oliver", "luna"],
+    sourceTemplateId: "template-picnic",
+    checklistItems: [
+      { id: "trip-picnic-water", label: "Water bowls for both pets", completed: false },
+      { id: "trip-picnic-cleanup", label: "Cleanup bags and wipes", completed: true },
+      { id: "trip-picnic-treats", label: "Oliver's dried lamb treats", completed: false },
+    ],
+    documentLinks: [
+      {
+        id: "trip-picnic-rabies-oliver",
+        petId: "oliver",
+        documentId: "doc-rabies-cert",
+        recordType: "vaccine_record",
+        recordId: "v1",
+        label: "Oliver rabies proof",
+        documentType: "rabies-proof",
+        status: "current",
+        expiresOn: "2028-01-18",
+        renewalLeadDays: 30,
+      },
+      {
+        id: "trip-picnic-rabies-luna",
+        petId: "luna",
+        label: "Luna rabies proof",
+        documentType: "rabies-proof",
+        status: "missing",
+        renewalLeadDays: 30,
+      },
+    ],
+    notes: "Keep both pets shaded and bring extra water.",
   },
 ];
 

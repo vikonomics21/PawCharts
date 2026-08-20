@@ -1,8 +1,8 @@
 # PawChart
 
-PawChart is a mobile-first PWA prototype for pet care records, reminders, household sharing, and public vaccination links.
+PawChart is a mobile-first PWA for pet care records, reminders, household sharing, and public vaccination links.
 
-This first version is intentionally mock-data driven so the product experience can be tested before Supabase auth and screen-level persistence are connected.
+Local development keeps a rich mock-data playground for product/design work. Production is guarded so signed-out users see authentication and signed-in users load Supabase-backed data instead of demo records.
 
 ## Current Scope
 
@@ -11,7 +11,7 @@ This first version is intentionally mock-data driven so the product experience c
 - Shadcn-style local component setup
 - PWA manifest, app icons, service worker, and iOS homescreen metadata
 - Mobile app shell optimized around a 390px iPhone viewport
-- Mock Home, Pets, Records, and Household tabs
+- Local-only mock Home, Pets, Records, and Household workflows
 - One-tap care logging interactions
 - Demo dog and cat profiles with species-specific fields
 - Supabase SQL migration blueprint with household roles, records, reminders, sharing, documents, and RLS policies
@@ -28,8 +28,8 @@ Open http://localhost:3000.
 
 ## Important Files
 
-- `src/components/pawchart-app.tsx` - current mock product UI
-- `src/data/demo.ts` - demo pets, tasks, vaccines, and care events
+- `src/components/pawchart-app.tsx` - product UI with explicit local-demo versus production data modes
+- `src/data/demo.ts` - local-only demo pets, tasks, vaccines, care events, documents, and lists
 - `src/lib/brand.ts` - centralized placeholder branding
 - `src/lib/supabase/` - Supabase client helpers and first persistence adapters
 - `src/app/auth/` - Google OAuth server actions and callback route
@@ -37,6 +37,24 @@ Open http://localhost:3000.
 - `public/sw.js` - basic app-shell service worker
 - `supabase/migrations/0001_initial_schema.sql` - database blueprint for the future Supabase project
 - `.env.local` - local-only Supabase credentials; ignored by git
+
+## Data Modes
+
+- Local development: loads the full demo playground from `src/data/demo.ts` so feature design stays easy to visualize.
+- Production: never falls back to demo pets, records, documents, share links, or fake household access. Signed-out users see sign-in; signed-in users receive Supabase-backed initial data as each screen is migrated.
+- Starter templates can remain available as product scaffolding, but fake user-owned records must stay out of production paths.
+
+## Production Environment
+
+Set these in Vercel for the private beta:
+
+- `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL.
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` - browser-safe Supabase publishable key.
+- `SUPABASE_SECRET_KEY` - server-only Supabase secret key for onboarding bootstrap and read-only support. `SUPABASE_SERVICE_ROLE_KEY` is accepted as a fallback name.
+- `ADMIN_EMAILS` - comma-separated emails allowed to access `/support`.
+- `NEXT_PUBLIC_SITE_URL` - production site URL, such as `https://pets.vikonomics.com`.
+
+Never put secret keys in frontend code or committed files.
 
 ## Project Memory
 

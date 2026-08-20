@@ -2,6 +2,12 @@
 
 This file documents reusable interaction patterns for PawChart so screens stay consistent as features are added.
 
+## Data Modes
+
+- Local demo mode is a founder/design sandbox, not a production user experience.
+- Production screens should start from authenticated Supabase data or an auth/onboarding state, never from demo pets, demo records, demo documents, fake share links, or fake access members.
+- Starter templates are allowed in production when they are generic product scaffolding rather than user-owned records.
+
 ## Navigation
 
 - Evolve the main app toward `Home`, `Calendar`, `Health`, `Pets`, and a global `Add` action.
@@ -107,6 +113,7 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 ## Documents
 
 - Vaccine proof should appear as a compact `Proof files` row with an add action.
+- Vaccine proof should show the latest proof first and keep older proof versions in a compact disclosure.
 - Documents should support preview placeholder, rename, remove, attach, and detach actions.
 - Documents are private by default.
 - In all-documents lists, the file row itself should open preview; do not add a separate Preview button.
@@ -149,3 +156,25 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Measurements should be accessible from Pets through a compact entry point, not by expanding the profile snapshot.
 - Measurement history should include a direct `Log weight` action.
 - Sharing/access should summarize first and move detailed member/share-link controls behind one manage action.
+
+## Lists And Kits
+
+- Lists & kits should live as a Home workflow, then open a detail modal for templates, dated lists, packing items, resource links, and document readiness.
+- Pets should avoid becoming a catch-all for active workflows; keep it focused on identity, care context, notes, care team, sharing, and measurements.
+- Dated list prep appears in Home and Calendar as prep tasks only; Calendar should not render full trip/list spans.
+- Undated custom lists stay in Lists & kits and should not create Calendar attention items.
+- Checklist resource links should display short labels with a link icon, never raw long URLs in list rows.
+- Lists should use a unified `Items` list with task, document, and link item types.
+- Document list items should attach existing records/documents or upload a new PDF/image directly from the row; attached files remain available in All documents.
+- Suggested documents from templates should become editable checklist items, not a separate document packet section.
+- Home list cards should show compact pet context and up to three actionable checklist items before sending users to the full list.
+- Reusable lists should expose `Reset list` with confirmation and reset completion state only.
+- Single-pet views should hide horizontal pet switchers and use compact `Add more +` entry points where relevant.
+- Onboarding should ask for the few details needed to make the app useful quickly, then create a Complete later checklist for richer context.
+- Lists & kits item rows should use compact row density; hide the `Task` pill for normal task rows and show type pills only for document/link rows.
+- Add-item forms should progressively reveal fields based on selected type instead of showing task, document, and link fields at once.
+- List progress should use short chips so status never competes with the list title.
+- List management actions should stay compact: edit/delete list actions live in the list header, item removal lives on the row, and destructive actions require confirmation.
+- Travel guidance copy should avoid presenting suggested document lists as official legal or airline requirements.
+- Home attention rows should be clickable when they lead to a relevant follow-up surface; the row body navigates while compact completion/log actions remain separate.
+- Calendar selected-day sections should present broad activity: due items, completed logs, observations, vet visits, and list prep.

@@ -37,12 +37,23 @@ import Image from "next/image";
 import { FormEvent, useMemo, useState } from "react";
 
 import {
+  completeProductionOnboarding,
+  createProductionPet,
+  createProductionVetProvider,
+  updateProductionOwnerProfile,
+  updateProductionPet,
+  updateProductionPetCareTeam,
+  updateProductionVetProvider,
+} from "@/app/pawchart-production-actions";
+import {
   demoCareEvents,
   demoDocuments,
   demoOwnerProfile,
   demoObservations,
   demoPets,
   demoTasks,
+  demoKitTemplates,
+  demoPetKits,
   demoVetPrepItems,
   demoVetProviders,
   demoVetVisits,
@@ -55,6 +66,11 @@ import {
   type PetSpecies,
   type RecordDocument,
   type Task,
+  type KitChecklistItem,
+  type KitDocumentLink,
+  type KitDocumentStatus,
+  type KitTemplate,
+  type PetKit,
   type VetPrepItem,
   type VetProvider,
   type VetVisit,
@@ -62,6 +78,7 @@ import {
 } from "@/data/demo";
 import { signInWithGoogle, signOut } from "@/app/auth/actions";
 import { brand } from "@/lib/brand";
+import type { PawChartWorkspace } from "@/lib/supabase/workspace";
 import { cn } from "@/lib/utils";
 
 type Tab = "home" | "calendar" | "records" | "pets";
@@ -99,6 +116,16 @@ type ModalState =
   | { title: string; type: "upload-document"; petId: string }
   | { title: string; type: "health-documents"; petId: string }
   | { title: string; type: "pet-measurements"; petId: string }
+  | { title: string; type: "lists-kits"; pet: Pet; kitId?: string; allPets?: boolean }
+  | { title: string; type: "create-kit"; petId: string; templateId?: string }
+  | { title: string; type: "edit-kit"; trip: PetKit }
+  | { title: string; type: "confirm-delete-kit"; trip: PetKit }
+  | { title: string; type: "kit-attach-item-document"; tripId: string; item: KitChecklistItem }
+  | { title: string; type: "kit-attach-document"; tripId: string; link: KitDocumentLink }
+  | { title: string; type: "kit-document-item"; tripId: string; link?: KitDocumentLink }
+  | { title: string; type: "confirm-remove-kit-document"; tripId: string; link: KitDocumentLink }
+  | { title: string; type: "confirm-remove-kit-item"; tripId: string; itemId: string; label: string }
+  | { title: string; type: "confirm-reset-kit"; trip: PetKit }
   | { title: string; type: "sharing-access"; pet: Pet }
   | { title: string; type: "share-link-qr"; link: ShareLink }
   | { title: string; type: "training-cues"; pet: Pet }
@@ -128,6 +155,52 @@ type UndoSnapshot = {
   task?: Task;
 };
 
+type KitPrepItem = {
+  endDate: string;
+  id: string;
+  date: string;
+  destination: string;
+  petIds: string[];
+  prepLabel: "List prep" | "Trip prep";
+  title: string;
+  tripId: string;
+  tripTitle: string;
+};
+
+type KitDocumentItemInput = {
+  documentType: KitDocumentLink["documentType"];
+  expiresOn: string;
+  label: string;
+  petId: string;
+};
+
+type KitChecklistItemInput = {
+  documentType: KitChecklistItem["documentType"];
+  itemType: NonNullable<KitChecklistItem["itemType"]>;
+  label: string;
+  petId: string;
+  resourceLabel: string;
+  resourceUrl: string;
+};
+
+type KitUnifiedItem = KitChecklistItem & {
+  source: "checklist" | "document-link";
+  status?: KitDocumentLink["status"];
+};
+
+type OnboardingInput = {
+  firstName: string;
+  email: string;
+  city: string;
+  petName: string;
+  species: PetSpecies;
+  breed: string;
+  ageLabel: string;
+  weight: string;
+  setupStyle: "simple" | "upload";
+  files: FileList | null;
+};
+
 type VetProviderFormInput = Omit<VetProvider, "householdId" | "id">;
 
 type PetAccessMember = {
@@ -151,6 +224,24 @@ type ShareLink = {
   status: "Active" | "Revoked";
   createdLabel: string;
 };
+
+export type PawChartDataMode = "local-demo" | "production";
+
+export type PawChartInitialData = Partial<{
+  careEvents: CareEvent[];
+  documents: RecordDocument[];
+  logs: LogEntry[];
+  observations: ObservationRecord[];
+  petAccessMembers: PetAccessMember[];
+  petKits: PetKit[];
+  pets: Pet[];
+  shareLinks: ShareLink[];
+  tasks: Task[];
+  vaccines: VaccineRecord[];
+  vetPrepItems: VetPrepItem[];
+  vetProviders: VetProvider[];
+  vetVisits: VetVisit[];
+}>;
 
 const tabs: { id: Tab; label: string; icon: typeof Home }[] = [
   { id: "home", label: "Home", icon: Home },
@@ -205,76 +296,143 @@ const initialShareLinks: ShareLink[] = [
   },
 ];
 
+const demoLogEntries: LogEntry[] = [
+  {
+    id: "log-flea-apr",
+    petId: "oliver",
+    recordId: "flea",
+    recordType: "medication",
+    title: "Flea and tick treatment",
+    occurredOn: "2026-05-06",
+    details: "Simparica Trio, monthly dose",
+    createdLabel: "May 6",
+  },
+  {
+    id: "log-weight-luna",
+    petId: "luna",
+    recordId: "weight",
+    recordType: "measurement",
+    title: "Weight check",
+    occurredOn: "2026-05-28",
+    value: "10.5 lb",
+    createdLabel: "May 28",
+  },
+  {
+    id: "log-visit-oliver-allergy",
+    petId: "oliver",
+    recordId: "visit-oliver-allergy",
+    recordType: "vet_visit",
+    title: "Skin and allergy check",
+    occurredOn: "2026-04-18",
+    details: "Parkside Vet - Discussed paw licking after grass-heavy walks.",
+    createdLabel: "Apr 18",
+  },
+  {
+    id: "log-visit-luna-wellness",
+    petId: "luna",
+    recordId: "visit-luna-wellness",
+    recordType: "vet_visit",
+    title: "Annual wellness exam",
+    occurredOn: "2026-03-12",
+    details: "Mission Cat Clinic - Weight steady.",
+    createdLabel: "Mar 12",
+  },
+];
+
+const localDemoInitialData: Required<PawChartInitialData> = {
+  careEvents: demoCareEvents,
+  documents: demoDocuments,
+  logs: demoLogEntries,
+  observations: demoObservations,
+  petAccessMembers: initialPetAccessMembers,
+  petKits: demoPetKits,
+  pets: demoPets,
+  shareLinks: initialShareLinks,
+  tasks: demoTasks,
+  vaccines: demoVaccines,
+  vetPrepItems: demoVetPrepItems,
+  vetProviders: demoVetProviders,
+  vetVisits: demoVetVisits,
+};
+
+const productionInitialData: Required<PawChartInitialData> = {
+  careEvents: [],
+  documents: [],
+  logs: [],
+  observations: [],
+  petAccessMembers: [],
+  petKits: [],
+  pets: [],
+  shareLinks: [],
+  tasks: [],
+  vaccines: [],
+  vetPrepItems: [],
+  vetProviders: [],
+  vetVisits: [],
+};
+
+const emptyOwnerProfile: OwnerProfile = {
+  id: "current-owner",
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  city: "",
+};
+
+function resolveInitialData(mode: PawChartDataMode, initialData?: PawChartInitialData): Required<PawChartInitialData> {
+  const base = mode === "local-demo" ? localDemoInitialData : productionInitialData;
+
+  return {
+    ...base,
+    ...initialData,
+  };
+}
+
 export function PawChartApp({
+  appMode,
   authEmail = null,
+  initialData,
   initialOwnerProfile,
   isAuthenticated = false,
+  workspace: initialWorkspace,
 }: {
+  appMode?: PawChartDataMode;
   authEmail?: string | null;
+  initialData?: PawChartInitialData;
   initialOwnerProfile?: OwnerProfile;
   isAuthenticated?: boolean;
+  workspace?: PawChartWorkspace;
 }) {
+  const resolvedAppMode = appMode ?? (process.env.NODE_ENV !== "production" ? "local-demo" : "production");
+  const resolvedInitialData = resolveInitialData(resolvedAppMode, initialData);
+  const isLocalDemo = resolvedAppMode === "local-demo";
   const [activeTab, setActiveTab] = useState<Tab>("home");
-  const [pets, setPets] = useState<Pet[]>(demoPets);
-  const [selectedPetId, setSelectedPetId] = useState(demoPets[0].id);
-  const [tasks, setTasks] = useState<Task[]>(demoTasks);
-  const [vaccines, setVaccines] = useState<VaccineRecord[]>(demoVaccines);
-  const [careEvents, setCareEvents] = useState<CareEvent[]>(demoCareEvents);
-  const [documents, setDocuments] = useState<RecordDocument[]>(demoDocuments);
-  const [observations, setObservations] = useState<ObservationRecord[]>(demoObservations);
-  const [vetPrepItems, setVetPrepItems] = useState<VetPrepItem[]>(demoVetPrepItems);
-  const [vetProviders, setVetProviders] = useState<VetProvider[]>(demoVetProviders);
-  const [vetVisits, setVetVisits] = useState<VetVisit[]>(demoVetVisits);
-  const [ownerProfile, setOwnerProfile] = useState<OwnerProfile>(initialOwnerProfile ?? demoOwnerProfile);
-  const [petAccessMembers, setPetAccessMembers] = useState<PetAccessMember[]>(initialPetAccessMembers);
-  const [shareLinks, setShareLinks] = useState<ShareLink[]>(initialShareLinks);
+  const [pets, setPets] = useState<Pet[]>(() => resolvedInitialData.pets);
+  const [selectedPetId, setSelectedPetId] = useState(resolvedInitialData.pets[0]?.id ?? "");
+  const [tasks, setTasks] = useState<Task[]>(() => resolvedInitialData.tasks);
+  const [vaccines, setVaccines] = useState<VaccineRecord[]>(() => resolvedInitialData.vaccines);
+  const [careEvents, setCareEvents] = useState<CareEvent[]>(() => resolvedInitialData.careEvents);
+  const [documents, setDocuments] = useState<RecordDocument[]>(() => resolvedInitialData.documents);
+  const [observations, setObservations] = useState<ObservationRecord[]>(() => resolvedInitialData.observations);
+  const [vetPrepItems, setVetPrepItems] = useState<VetPrepItem[]>(() => resolvedInitialData.vetPrepItems);
+  const [vetProviders, setVetProviders] = useState<VetProvider[]>(() => resolvedInitialData.vetProviders);
+  const [vetVisits, setVetVisits] = useState<VetVisit[]>(() => resolvedInitialData.vetVisits);
+  const [kitTemplates] = useState<KitTemplate[]>(demoKitTemplates);
+  const [petKits, setPetKits] = useState<PetKit[]>(() => resolvedInitialData.petKits);
+  const [ownerProfile, setOwnerProfile] = useState<OwnerProfile>(
+    initialOwnerProfile ?? (isLocalDemo ? demoOwnerProfile : emptyOwnerProfile),
+  );
+  const [petAccessMembers, setPetAccessMembers] = useState<PetAccessMember[]>(() => resolvedInitialData.petAccessMembers);
+  const [shareLinks, setShareLinks] = useState<ShareLink[]>(() => resolvedInitialData.shareLinks);
+  const [workspace, setWorkspace] = useState<PawChartWorkspace | undefined>(initialWorkspace);
   const [copiedShareLinkId, setCopiedShareLinkId] = useState<string | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [modal, setModal] = useState<ModalState>(null);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(resolvedInitialData.pets.length > 0);
   const [lastUndo, setLastUndo] = useState<LogEntry | null>(null);
   const [undoSnapshots, setUndoSnapshots] = useState<Record<string, UndoSnapshot>>({});
-  const [logs, setLogs] = useState<LogEntry[]>([
-    {
-      id: "log-flea-apr",
-      petId: "oliver",
-      recordId: "flea",
-      recordType: "medication",
-      title: "Flea and tick treatment",
-      occurredOn: "2026-05-06",
-      details: "Simparica Trio, monthly dose",
-      createdLabel: "May 6",
-    },
-    {
-      id: "log-weight-luna",
-      petId: "luna",
-      recordId: "weight",
-      recordType: "measurement",
-      title: "Weight check",
-      occurredOn: "2026-05-28",
-      value: "10.5 lb",
-      createdLabel: "May 28",
-    },
-    {
-      id: "log-visit-oliver-allergy",
-      petId: "oliver",
-      recordId: "visit-oliver-allergy",
-      recordType: "vet_visit",
-      title: "Skin and allergy check",
-      occurredOn: "2026-04-18",
-      details: "Parkside Vet - Discussed paw licking after grass-heavy walks.",
-      createdLabel: "Apr 18",
-    },
-    {
-      id: "log-visit-luna-wellness",
-      petId: "luna",
-      recordId: "visit-luna-wellness",
-      recordType: "vet_visit",
-      title: "Annual wellness exam",
-      occurredOn: "2026-03-12",
-      details: "Mission Cat Clinic - Weight steady.",
-      createdLabel: "Mar 12",
-    },
-  ]);
+  const [logs, setLogs] = useState<LogEntry[]>(() => resolvedInitialData.logs);
 
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? pets[0];
   const scheduledTasks = useMemo(() => tasks.filter((task) => !task.completed), [tasks]);
@@ -282,13 +440,23 @@ export function PawChartApp({
     () => scheduledTasks.filter((task) => task.dueDate <= todayValue),
     [scheduledTasks],
   );
+
+  if (resolvedAppMode === "production" && !isAuthenticated) {
+    return <ProductionSignInView />;
+  }
+
+  function handleProductionError(error: unknown) {
+    console.error(error);
+    window.alert(error instanceof Error ? error.message : "Something went wrong while saving. Please try again.");
+  }
+
   function openRecordsForPet(petId: string) {
     setSelectedPetId(petId);
     setActiveTab("records");
     setShowNotifications(false);
   }
 
-  function addPet(input: {
+  async function addPet(input: {
     name: string;
     species: PetSpecies;
     breed: string;
@@ -296,6 +464,19 @@ export function PawChartApp({
     weight: string;
     behaviorNotes: string;
   }) {
+    if (!isLocalDemo) {
+      try {
+        const pet = await createProductionPet(input);
+        setPets((current) => [...current, pet]);
+        setSelectedPetId(pet.id);
+        setActiveTab("pets");
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     const pet: Pet = {
       id: uniqueId(slugify(input.name || "pet"), pets.map((item) => item.id)),
       name: input.name || "New pet",
@@ -349,7 +530,131 @@ export function PawChartApp({
     setModal(null);
   }
 
-  function updatePet(input: Pet) {
+  async function completeOnboarding(input: OnboardingInput) {
+    if (!isLocalDemo) {
+      try {
+        const result = await completeProductionOnboarding({
+          ageLabel: input.ageLabel,
+          breed: input.breed,
+          city: input.city,
+          email: input.email,
+          firstName: input.firstName,
+          petName: input.petName,
+          species: input.species,
+          weight: input.weight,
+        });
+
+        setOwnerProfile(result.ownerProfile);
+        setPets([result.pet]);
+        setSelectedPetId(result.pet.id);
+        setVetProviders(result.vetProviders);
+        setWorkspace(result.workspace);
+        setPetKits([]);
+        setOnboardingDismissed(true);
+        setActiveTab("home");
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    const petId = uniqueId(slugify(input.petName || "pet"), pets.map((item) => item.id));
+    const pet: Pet = {
+      id: petId,
+      name: input.petName || "New pet",
+      species: input.species,
+      breed: input.breed || "Unknown breed",
+      sex: "male",
+      photo:
+        input.species === "dog"
+          ? "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=640&q=80"
+          : "https://images.unsplash.com/photo-1574158622682-e40e69881006?auto=format&fit=crop&w=640&q=80",
+      ageLabel: input.ageLabel || "Approximate age",
+      ageEstimated: true,
+      weight: input.weight || "Not logged",
+      status: "Ready for care",
+      behaviorNotes: "",
+      careNotes: "",
+      medicalNotes: "",
+      background: {
+        adoptionPlace: "",
+        adoptionDate: "",
+        spayedNeutered: false,
+        microchipped: false,
+        microchipNumber: "",
+        knownHistory: "",
+      },
+      foodPreferences: {
+        favorites: [],
+        dislikes: [],
+        rules: [],
+      },
+      dynamicFields:
+        input.species === "dog"
+          ? []
+          : [
+              { label: "Lifestyle", value: "Not set" },
+              { label: "Litter", value: "Not set" },
+            ],
+      trainingCues: input.species === "dog" ? [] : undefined,
+    };
+    const uploadedDocuments = Array.from(input.files ?? []).map((file, index) => ({
+      createdAt: new Date(Date.now() + index).toISOString(),
+      documentGroupId: `onboarding:${petId}:records`,
+      id: `doc-onboarding-${petId}-${Date.now()}-${index}`,
+      petId,
+      recordId: petId,
+      recordType: "pet" as const,
+      title: file.name,
+      fileType: file.type === "application/pdf" ? ("pdf" as const) : ("image" as const),
+      sizeLabel: formatFileSize(file.size),
+      addedLabel: "Just now",
+      privateByDefault: true,
+      versionLabel: "Latest",
+    }));
+    const completeLaterKit: PetKit = {
+      id: `kit-complete-later-${petId}`,
+      title: `${pet.name} setup checklist`,
+      destination: "Complete later",
+      petIds: [petId],
+      sourceTemplateId: "template-blank",
+      checklistItems: [
+        { id: `setup-${petId}-vaccines`, itemType: "document", label: "Add vaccine records", completed: uploadedDocuments.length > 0, petId, documentType: "vaccination-records", documentId: uploadedDocuments[0]?.id },
+        { id: `setup-${petId}-vet`, itemType: "task", label: "Add primary vet", completed: false },
+        { id: `setup-${petId}-routine`, itemType: "task", label: "Create first care routine", completed: false },
+        { id: `setup-${petId}-food`, itemType: "task", label: "Add food preferences", completed: false },
+        { id: `setup-${petId}-microchip`, itemType: "document", label: "Add microchip or registration info", completed: false, petId, documentType: "microchip-info" },
+      ],
+      documentLinks: [],
+      notes: input.setupStyle === "upload" ? "Uploaded records are saved privately. AI parsing comes later." : "Add more context when it becomes useful.",
+    };
+
+    setOwnerProfile((current) => ({
+      ...current,
+      city: input.city || current.city,
+      email: input.email || current.email,
+      firstName: input.firstName || current.firstName,
+    }));
+    setPets([pet]);
+    setSelectedPetId(pet.id);
+    if (uploadedDocuments.length > 0) setDocuments((current) => [...uploadedDocuments, ...current]);
+    setPetKits([completeLaterKit]);
+    setOnboardingDismissed(true);
+    setActiveTab("home");
+  }
+
+  async function updatePet(input: Pet) {
+    if (!isLocalDemo) {
+      try {
+        const pet = await updateProductionPet(input);
+        setPets((current) => current.map((currentPet) => (currentPet.id === pet.id ? pet : currentPet)));
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setPets((current) => current.map((pet) => (pet.id === input.id ? input : pet)));
     setModal(null);
   }
@@ -388,7 +693,18 @@ export function PawChartApp({
     );
   }
 
-  function changePetVet(input: { petId: string; primaryVetId: string; secondaryVetId: string; secondaryVetRole: string }) {
+  async function changePetVet(input: { petId: string; primaryVetId: string; secondaryVetId: string; secondaryVetRole: string }) {
+    if (!isLocalDemo) {
+      try {
+        const pet = await updateProductionPetCareTeam(input);
+        setPets((current) => current.map((currentPet) => (currentPet.id === pet.id ? pet : currentPet)));
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setPets((current) =>
       current.map((pet) =>
         pet.id === input.petId
@@ -404,15 +720,37 @@ export function PawChartApp({
     setModal(null);
   }
 
-  function updateOwnerProfile(input: OwnerProfile) {
+  async function updateOwnerProfile(input: OwnerProfile) {
+    if (!isLocalDemo) {
+      try {
+        const owner = await updateProductionOwnerProfile(input);
+        setOwnerProfile(owner);
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setOwnerProfile(input);
     setModal(null);
   }
 
-  function addVetProvider(input: VetProviderFormInput) {
+  async function addVetProvider(input: VetProviderFormInput) {
+    if (!isLocalDemo) {
+      try {
+        const provider = await createProductionVetProvider(input);
+        setVetProviders((current) => [...current, provider]);
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     const provider: VetProvider = {
       id: uniqueId(slugify(input.name || "vet"), vetProviders.map((item) => item.id)),
-      householdId: "household-demo",
+      householdId: workspace?.household?.id ?? "household-demo",
       name: input.name || "New vet or clinic",
       phone: input.phone,
       address: input.address,
@@ -424,7 +762,20 @@ export function PawChartApp({
     setModal(null);
   }
 
-  function updateVetProvider(input: VetProvider) {
+  async function updateVetProvider(input: VetProvider) {
+    if (!isLocalDemo) {
+      try {
+        const provider = await updateProductionVetProvider(input);
+        setVetProviders((current) =>
+          current.map((currentProvider) => (currentProvider.id === provider.id ? provider : currentProvider)),
+        );
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
     setVetProviders((current) =>
       current.map((provider) => (provider.id === input.id ? input : provider)),
     );
@@ -512,6 +863,8 @@ export function PawChartApp({
     };
     const billDocument: RecordDocument | null = input.billDocument
       ? {
+          createdAt: new Date().toISOString(),
+          documentGroupId: `vet_visit:${visit.id}:bill`,
           id: billDocumentId ?? `doc-bill-${Date.now()}`,
           petId: input.petId,
           recordId: visit.id,
@@ -521,6 +874,7 @@ export function PawChartApp({
           sizeLabel: input.billDocument.sizeLabel,
           addedLabel: "Just now",
           privateByDefault: true,
+          versionLabel: "Latest",
         }
       : null;
     const log: LogEntry = {
@@ -888,20 +1242,44 @@ export function PawChartApp({
     recordType: DocumentRecordType;
   }) {
     if (!files?.length) return;
+    const uploadedFiles = Array.from(files);
 
-    const newDocuments = Array.from(files).map((file) => ({
-      id: `doc-${recordType}-${recordId}-${file.name}-${Date.now()}`,
-      petId,
-      recordId,
-      recordType,
-      title: file.name,
-      fileType: file.type === "application/pdf" ? ("pdf" as const) : ("image" as const),
-      sizeLabel: formatFileSize(file.size),
-      addedLabel: "Just now",
-      privateByDefault: true,
-    }));
+    setDocuments((current) => {
+      const existing = current.filter(
+        (document) =>
+          document.petId === petId &&
+          document.recordId === recordId &&
+          document.recordType === recordType,
+      );
+      const latestExisting = latestDocument(existing);
+      const groupId =
+        latestExisting?.documentGroupId ?? `${recordType}:${recordId}:${recordType === "vaccine_record" ? "proof" : "files"}`;
+      const baseTime = Date.now();
+      const newDocuments = uploadedFiles.map((file, index) => ({
+        createdAt: new Date(baseTime + index).toISOString(),
+        documentGroupId: groupId,
+        id: `doc-${recordType}-${recordId}-${file.name}-${baseTime + index}`,
+        petId,
+        recordId,
+        recordType,
+        title: file.name,
+        fileType: file.type === "application/pdf" ? ("pdf" as const) : ("image" as const),
+        sizeLabel: formatFileSize(file.size),
+        addedLabel: "Just now",
+        privateByDefault: true,
+        versionLabel: "Latest",
+      }));
+      const newestUpload = newDocuments[newDocuments.length - 1];
 
-    setDocuments((current) => [...newDocuments, ...current]);
+      return [
+        ...newDocuments,
+        ...current.map((document) =>
+          document.id === latestExisting?.id && newestUpload
+            ? { ...document, supersededById: newestUpload.id, versionLabel: "Older" }
+            : document,
+        ),
+      ];
+    });
   }
 
   function uploadPlaceholderDocument(input: {
@@ -912,6 +1290,8 @@ export function PawChartApp({
     sizeLabel?: string;
   }) {
     const document: RecordDocument = {
+      createdAt: new Date().toISOString(),
+      documentGroupId: `pet:${input.petId}:uploads`,
       id: `doc-upload-${Date.now()}`,
       petId: input.petId,
       recordId: input.petId,
@@ -921,10 +1301,437 @@ export function PawChartApp({
       sizeLabel: input.sizeLabel ?? "Pending upload",
       addedLabel: "Just now",
       privateByDefault: true,
+      versionLabel: "Latest",
     };
 
     setDocuments((current) => [document, ...current]);
     setModal(null);
+  }
+
+  function createPetKit(input: {
+    destination: string;
+    endDate: string;
+    notes: string;
+    petIds: string[];
+    startDate: string;
+    templateId: string;
+    title: string;
+  }) {
+    const template = kitTemplates.find((item) => item.id === input.templateId) ?? kitTemplates[0];
+    const selectedPetIds = input.petIds.length > 0 ? input.petIds : [selectedPet.id];
+    const kitId = `kit-${slugify(input.title || template.name)}-${Date.now()}`;
+    const checklistItems = template.checklistItems.map((item, index) => ({
+      ...item,
+      id: `${kitId}-item-${index}`,
+      completed: false,
+      itemType: item.resourceUrl ? ("link" as const) : ("task" as const),
+    }));
+    const shouldCreateDocumentBundle = Boolean(input.startDate) && template.suggestedDocumentTypes.length > 0;
+    const documentItems = shouldCreateDocumentBundle
+      ? selectedPetIds.flatMap((petId) =>
+          template.suggestedDocumentTypes.map((documentType) => {
+            const latestMatch = findLatestDocumentForKitType(documents, petId, documentType);
+
+            return {
+              id: `${kitId}-${petId}-${documentType}`,
+              completed: Boolean(latestMatch),
+              petId,
+              label: `${pets.find((pet) => pet.id === petId)?.name ?? "Pet"} ${kitDocumentTypeLabel(documentType)}`,
+              documentId: latestMatch?.id,
+              recordId: latestMatch?.recordId,
+              recordType: latestMatch?.recordType,
+              documentType,
+              itemType: "document" as const,
+            };
+          }),
+        )
+      : [];
+    const kit: PetKit = {
+      id: kitId,
+      title: input.title || (template.id === "template-blank" ? "Custom list" : `${template.name} list`),
+      destination: input.destination || undefined,
+      startDate: input.startDate || undefined,
+      endDate: input.endDate || input.startDate || undefined,
+      petIds: selectedPetIds,
+      sourceTemplateId: template.id,
+      checklistItems: [...checklistItems, ...documentItems],
+      documentLinks: [],
+      notes: input.notes,
+    };
+
+    setPetKits((current) => [kit, ...current]);
+    setModal({ title: "Lists & kits", type: "lists-kits", pet: selectedPet, kitId: kit.id, allPets: true });
+  }
+
+  function updatePetKit(input: {
+    destination: string;
+    endDate: string;
+    notes: string;
+    petIds: string[];
+    startDate: string;
+    title: string;
+    tripId: string;
+  }) {
+    const selectedPetIds = input.petIds.length > 0 ? input.petIds : [selectedPet.id];
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === input.tripId
+          ? {
+              ...trip,
+              destination: input.destination || undefined,
+              endDate: input.endDate || input.startDate || undefined,
+              notes: input.notes,
+              petIds: selectedPetIds,
+              startDate: input.startDate || undefined,
+              title: input.title.trim() || trip.title,
+            }
+          : trip,
+      ),
+    );
+
+    const pet = pets.find((item) => item.id === selectedPetIds[0]) ?? selectedPet;
+    setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: input.tripId, allPets: true });
+  }
+
+  function deletePetKit(tripId: string) {
+    setPetKits((current) => current.filter((trip) => trip.id !== tripId));
+    setModal({ title: "Lists & kits", type: "lists-kits", pet: selectedPet, allPets: true });
+  }
+
+  function toggleKitChecklistItem(tripId: string, itemId: string) {
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              checklistItems: trip.checklistItems.map((item) =>
+                item.id === itemId ? { ...item, completed: !item.completed } : item,
+              ),
+              documentLinks: trip.documentLinks.map((link) =>
+                link.id === itemId ? { ...link, completed: !kitDocumentResolved(link), status: kitDocumentResolved(link) ? "missing" : "attached" } : link,
+              ),
+            }
+          : trip,
+      ),
+    );
+  }
+
+  function removeKitChecklistItem(tripId: string, itemId: string) {
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              checklistItems: trip.checklistItems.filter((item) => item.id !== itemId),
+              documentLinks: trip.documentLinks.filter((link) => link.id !== itemId),
+            }
+          : trip,
+      ),
+    );
+    reopenKitModal(tripId);
+  }
+
+  function addKitChecklistItem(input: KitChecklistItemInput & { tripId: string }) {
+    const label = input.label.trim();
+    if (!label) return;
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === input.tripId
+          ? {
+              ...trip,
+              checklistItems: [
+                ...trip.checklistItems,
+                {
+                  id: `travel-item-${Date.now()}`,
+                  label,
+                  completed: false,
+                  documentType: input.itemType === "document" ? input.documentType : undefined,
+                  itemType: input.itemType,
+                  petId: input.itemType === "document" ? input.petId : undefined,
+                  resourceLabel: input.resourceLabel.trim(),
+                  resourceUrl: input.resourceUrl.trim(),
+                },
+              ],
+            }
+          : trip,
+      ),
+    );
+  }
+
+  function attachKitItemDocument(tripId: string, itemId: string, documentId: string) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document) return;
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              checklistItems: trip.checklistItems.map((item) =>
+                item.id === itemId
+                  ? {
+                      ...item,
+                      completed: true,
+                      documentId: document.id,
+                      petId: document.petId,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                    }
+                  : item,
+              ),
+              documentLinks: trip.documentLinks.map((link) =>
+                link.id === itemId
+                  ? {
+                      ...link,
+                      completed: true,
+                      documentId: document.id,
+                      petId: document.petId,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                      status: kitResolvedStatus(link, trip),
+                    }
+                  : link,
+              ),
+            }
+          : trip,
+      ),
+    );
+  }
+
+function uploadKitItemDocument(tripId: string, itemId: string, files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+
+    const trip = petKits.find((item) => item.id === tripId);
+    const checklistItem = trip?.checklistItems.find((item) => item.id === itemId);
+    const documentLink = trip?.documentLinks.find((item) => item.id === itemId);
+    const itemPetId = checklistItem?.petId ?? documentLink?.petId ?? trip?.petIds[0] ?? selectedPet.id;
+    if (!trip) return;
+
+    const timestamp = Date.now();
+    const document: RecordDocument = {
+      createdAt: new Date(timestamp).toISOString(),
+      documentGroupId: `kit:${tripId}:${itemId}`,
+      id: `doc-kit-item-${itemId}-${timestamp}`,
+      petId: itemPetId,
+      recordId: itemPetId,
+      recordType: "pet",
+      title: file.name,
+      fileType: file.type === "application/pdf" ? "pdf" : "image",
+      sizeLabel: formatFileSize(file.size),
+      addedLabel: "Just now",
+      privateByDefault: true,
+      versionLabel: "Latest",
+    };
+
+    setDocuments((current) => [document, ...current]);
+    setPetKits((current) =>
+      current.map((kit) =>
+        kit.id === tripId
+          ? {
+              ...kit,
+              checklistItems: kit.checklistItems.map((item) =>
+                item.id === itemId
+                  ? {
+                      ...item,
+                      completed: true,
+                      documentId: document.id,
+                      itemType: "document",
+                      petId: document.petId,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                    }
+                  : item,
+              ),
+              documentLinks: kit.documentLinks.map((link) =>
+                link.id === itemId
+                  ? {
+                      ...link,
+                      completed: true,
+                      documentId: document.id,
+                      petId: document.petId,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                      status: kitResolvedStatus(link, kit),
+                    }
+                  : link,
+              ),
+            }
+          : kit,
+      ),
+    );
+  }
+
+  function resetKit(tripId: string) {
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              checklistItems: trip.checklistItems.map((item) => ({ ...item, completed: false })),
+              documentLinks: trip.documentLinks.map((link) => ({ ...link, completed: false })),
+            }
+          : trip,
+      ),
+    );
+    reopenKitModal(tripId);
+  }
+
+  function attachKitDocument(tripId: string, documentLinkId: string, documentId: string) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document) return;
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              documentLinks: trip.documentLinks.map((link) =>
+                link.id === documentLinkId
+                  ? {
+                      ...link,
+                      documentId: document.id,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                      status: kitResolvedStatus(link, trip),
+                    }
+                  : link,
+              ),
+              checklistItems: completeRelatedKitChecklistItem(trip.checklistItems, trip.documentLinks.find((link) => link.id === documentLinkId)),
+            }
+          : trip,
+      ),
+    );
+  }
+
+  function uploadKitDocument(tripId: string, documentLinkId: string, files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+
+    const trip = petKits.find((item) => item.id === tripId);
+    const link = trip?.documentLinks.find((item) => item.id === documentLinkId);
+    if (!trip || !link) return;
+
+    const recordType = link.recordType ?? "pet";
+    const recordId = link.recordId ?? link.petId;
+    const timestamp = Date.now();
+    const document: RecordDocument = {
+      createdAt: new Date(timestamp).toISOString(),
+      documentGroupId: link.documentId
+        ? documents.find((item) => item.id === link.documentId)?.documentGroupId ?? `kit:${tripId}:${documentLinkId}`
+        : `kit:${tripId}:${documentLinkId}`,
+      id: `doc-kit-${documentLinkId}-${timestamp}`,
+      petId: link.petId,
+      recordId,
+      recordType,
+      title: file.name,
+      fileType: file.type === "application/pdf" ? "pdf" : "image",
+      sizeLabel: formatFileSize(file.size),
+      addedLabel: "Just now",
+      privateByDefault: true,
+      versionLabel: "Latest",
+    };
+
+    setDocuments((current) => [document, ...current]);
+    setPetKits((current) =>
+      current.map((item) =>
+        item.id === tripId
+          ? {
+              ...item,
+              documentLinks: item.documentLinks.map((currentLink) =>
+                currentLink.id === documentLinkId
+                  ? {
+                      ...currentLink,
+                      documentId: document.id,
+                      recordId: document.recordId,
+                      recordType: document.recordType,
+                      status: kitResolvedStatus(currentLink, item),
+                    }
+                  : currentLink,
+              ),
+              checklistItems: completeRelatedKitChecklistItem(item.checklistItems, link),
+            }
+          : item,
+      ),
+    );
+  }
+
+  function addKitDocumentLink(tripId: string, input: KitDocumentItemInput) {
+    const label = input.label.trim();
+    if (!label) return;
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              documentLinks: [
+                ...trip.documentLinks,
+                {
+                  id: `kit-document-${Date.now()}`,
+                  petId: input.petId,
+                  label,
+                  documentType: input.documentType,
+                  status: "missing",
+                  expiresOn: input.expiresOn || undefined,
+                  renewalLeadDays: defaultKitRenewalLeadDays(input.documentType),
+                },
+              ],
+            }
+          : trip,
+      ),
+    );
+    reopenKitModal(tripId);
+  }
+
+  function updateKitDocumentLink(tripId: string, linkId: string, input: KitDocumentItemInput) {
+    const label = input.label.trim();
+    if (!label) return;
+
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              documentLinks: trip.documentLinks.map((link) =>
+                link.id === linkId
+                  ? {
+                      ...link,
+                      petId: input.petId,
+                      label,
+                      documentType: input.documentType,
+                      expiresOn: input.expiresOn || undefined,
+                      renewalLeadDays: defaultKitRenewalLeadDays(input.documentType),
+                    }
+                  : link,
+              ),
+            }
+          : trip,
+      ),
+    );
+    reopenKitModal(tripId);
+  }
+
+  function removeKitDocumentLink(tripId: string, linkId: string) {
+    setPetKits((current) =>
+      current.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              documentLinks: trip.documentLinks.filter((link) => link.id !== linkId),
+            }
+          : trip,
+      ),
+    );
+    reopenKitModal(tripId);
+  }
+
+  function reopenKitModal(tripId: string) {
+    const trip = petKits.find((item) => item.id === tripId);
+    const pet = pets.find((item) => item.id === trip?.petIds[0]) ?? selectedPet;
+    setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: tripId, allPets: true });
   }
 
   function handleTaskPrimary(task: Task) {
@@ -955,11 +1762,36 @@ export function PawChartApp({
     setModal({ title: "Log for another date", type: "log-task", task, mode: "change-date" });
   }
 
+  function openAttentionTask(task: Task) {
+    setSelectedPetId(task.petId);
+    setActiveTab(task.type === "vaccine" ? "records" : "calendar");
+    setShowNotifications(false);
+  }
+
+  function openKitPrep(item: KitPrepItem) {
+    const pet = pets.find((currentPet) => currentPet.id === item.petIds[0]) ?? selectedPet;
+    setSelectedPetId(pet.id);
+    setShowNotifications(false);
+    setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: item.tripId, allPets: true });
+  }
+
+  if (!onboardingDismissed && pets.length === 0) {
+    return (
+      <OnboardingView
+        appMode={resolvedAppMode}
+        authEmail={authEmail}
+        ownerProfile={ownerProfile}
+        onSubmit={completeOnboarding}
+      />
+    );
+  }
+
   return (
     <main className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex min-h-dvh w-full max-w-[1440px] bg-background">
         <DesktopSidebar
           activeTab={activeTab}
+          dataMode={resolvedAppMode}
           isAuthenticated={isAuthenticated}
           onAdd={() => setModal({ title: "Log something", type: "global-add" })}
           setActiveTab={setActiveTab}
@@ -989,12 +1821,25 @@ export function PawChartApp({
                   lastUndo={lastUndo}
                   logs={logs}
                   onLogForDate={handleTaskBackdate}
+                  onCreateKit={() =>
+                    setModal({ title: "Create list", type: "create-kit", petId: selectedPet.id, templateId: "template-blank" })
+                  }
+                  onOpenAttentionTask={openAttentionTask}
+                  onOpenKit={(kit) => {
+                    const pet = pets.find((item) => item.id === kit.petIds[0]) ?? selectedPet;
+                    setSelectedPetId(pet.id);
+                    setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: kit.id, allPets: true });
+                  }}
+                  onOpenKitPrep={openKitPrep}
+                  onToggleKitItem={toggleKitChecklistItem}
+                  onViewAllKits={() => setModal({ title: "Lists & kits", type: "lists-kits", pet: selectedPet, allPets: true })}
                   onPrimary={handleTaskPrimary}
                   onUndo={undoLog}
                   openTasks={dueTasks}
                   ownerProfile={ownerProfile}
                   pets={pets}
                   scheduledTasks={scheduledTasks}
+                  petKits={petKits}
                   vaccines={vaccines}
                 />
               )}
@@ -1014,6 +1859,7 @@ export function PawChartApp({
                   selectedPet={selectedPet}
                   selectedPetId={selectedPetId}
                   setSelectedPetId={setSelectedPetId}
+                  petKits={petKits}
                   vetProviders={vetProviders}
                   vetVisits={vetVisits}
                   vaccines={vaccines}
@@ -1171,6 +2017,7 @@ export function PawChartApp({
         )}
         {modal?.type === "owner-profile" && (
           <OwnerProfileForm
+            appMode={resolvedAppMode}
             authEmail={authEmail}
             isAuthenticated={isAuthenticated}
             ownerProfile={ownerProfile}
@@ -1386,6 +2233,127 @@ export function PawChartApp({
             onLogWeight={() => setModal({ title: "Log weight", type: "weight", task: createWeightTask(modal.petId) })}
           />
         )}
+        {modal?.type === "lists-kits" && (
+          <ListsKitsModal
+            documents={documents}
+            onAddChecklistItem={addKitChecklistItem}
+            onAttachItemDocument={(trip, item) =>
+              setModal({ title: "Attach existing document", type: "kit-attach-item-document", tripId: trip.id, item })
+            }
+            onAttachExistingDocument={(trip, link) =>
+              setModal({ title: "Attach existing document", type: "kit-attach-document", tripId: trip.id, link })
+            }
+            onDeleteKit={(trip) => setModal({ title: "Delete list?", type: "confirm-delete-kit", trip })}
+            onEditKit={(trip) => setModal({ title: "Edit list", type: "edit-kit", trip })}
+            focusedKitId={modal.kitId}
+            onCreateTrip={(templateId) => setModal({ title: "Create list", type: "create-kit", petId: modal.pet.id, templateId })}
+            onPreviewDocument={(document) =>
+              setModal({
+                title: document.title,
+                type: "record-detail",
+                titleText: document.title,
+                body: `${document.fileType.toUpperCase()} preview placeholder. This file stays private unless you explicitly share it later.`,
+              })
+            }
+            onRemoveChecklistItem={(trip, item) =>
+              setModal({ title: "Remove item?", type: "confirm-remove-kit-item", tripId: trip.id, itemId: item.id, label: item.label })
+            }
+            onResetKit={(trip) => setModal({ title: "Reset list?", type: "confirm-reset-kit", trip })}
+            onToggleChecklistItem={toggleKitChecklistItem}
+            onUploadItemDocument={uploadKitItemDocument}
+            onUploadDocument={uploadKitDocument}
+            allPets={modal.allPets}
+            pets={pets}
+            selectedPet={modal.pet}
+            templates={kitTemplates}
+            trips={modal.allPets ? petKits : petKits.filter((trip) => trip.petIds.includes(modal.pet.id))}
+          />
+        )}
+        {modal?.type === "kit-attach-item-document" && (
+          <KitAttachChecklistDocumentForm
+            documents={documents.filter((document) =>
+              document.petId === (modal.item.petId ?? petKits.find((kit) => kit.id === modal.tripId)?.petIds[0]),
+            )}
+            item={modal.item}
+            onSubmit={(documentId) => {
+              attachKitItemDocument(modal.tripId, modal.item.id, documentId);
+              reopenKitModal(modal.tripId);
+            }}
+          />
+        )}
+        {modal?.type === "kit-attach-document" && (
+          <KitAttachDocumentForm
+            documents={documents.filter((document) => document.petId === modal.link.petId)}
+            link={modal.link}
+            onSubmit={(documentId) => {
+              attachKitDocument(modal.tripId, modal.link.id, documentId);
+              reopenKitModal(modal.tripId);
+            }}
+          />
+        )}
+        {modal?.type === "kit-document-item" && (
+          <KitDocumentItemForm
+            link={modal.link}
+            onSubmit={(input) => {
+              if (modal.link) {
+                updateKitDocumentLink(modal.tripId, modal.link.id, input);
+                return;
+              }
+              addKitDocumentLink(modal.tripId, input);
+            }}
+            pets={pets.filter((pet) => petKits.find((kit) => kit.id === modal.tripId)?.petIds.includes(pet.id))}
+          />
+        )}
+        {modal?.type === "confirm-reset-kit" && (
+          <ConfirmDeleteForm
+            body="Reset this list? Attached documents and links stay saved."
+            confirmLabel="Reset list"
+            onCancel={() => reopenKitModal(modal.trip.id)}
+            onConfirm={() => resetKit(modal.trip.id)}
+          />
+        )}
+        {modal?.type === "confirm-remove-kit-document" && (
+          <ConfirmDeleteForm
+            body={`Remove "${modal.link.label}" from this list? The underlying document stays saved.`}
+            confirmLabel="Remove item"
+            onCancel={() => reopenKitModal(modal.tripId)}
+            onConfirm={() => removeKitDocumentLink(modal.tripId, modal.link.id)}
+          />
+        )}
+        {modal?.type === "create-kit" && (
+          <CreatePetKitForm
+            onSubmit={createPetKit}
+            pets={pets}
+            selectedPetId={modal.petId}
+            templateId={modal.templateId}
+            templates={kitTemplates}
+          />
+        )}
+        {modal?.type === "edit-kit" && (
+          <CreatePetKitForm
+            kit={modal.trip}
+            onSubmit={(input) => updatePetKit({ ...input, tripId: modal.trip.id })}
+            pets={pets}
+            selectedPetId={modal.trip.petIds[0] ?? selectedPet.id}
+            templates={kitTemplates}
+          />
+        )}
+        {modal?.type === "confirm-delete-kit" && (
+          <ConfirmDeleteForm
+            body="Delete this list? Attached documents stay saved in All documents."
+            confirmLabel="Delete list"
+            onCancel={() => reopenKitModal(modal.trip.id)}
+            onConfirm={() => deletePetKit(modal.trip.id)}
+          />
+        )}
+        {modal?.type === "confirm-remove-kit-item" && (
+          <ConfirmDeleteForm
+            body={`Remove "${modal.label}" from the list? Attached documents stay saved.`}
+            confirmLabel="Remove item"
+            onCancel={() => reopenKitModal(modal.tripId)}
+            onConfirm={() => removeKitChecklistItem(modal.tripId, modal.itemId)}
+          />
+        )}
         {modal?.type === "sharing-access" && (
           <SharingAccessDetails
             copiedShareLinkId={copiedShareLinkId}
@@ -1426,17 +2394,145 @@ export function PawChartApp({
   );
 }
 
+function OnboardingView({
+  appMode,
+  authEmail,
+  onSubmit,
+  ownerProfile,
+}: {
+  appMode: PawChartDataMode;
+  authEmail: string | null;
+  onSubmit: (input: OnboardingInput) => void;
+  ownerProfile: OwnerProfile;
+}) {
+  const isLocalDemo = appMode === "local-demo";
+
+  return (
+    <main className="min-h-dvh bg-background px-5 py-8 text-foreground sm:px-8">
+      <section className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-3xl items-center">
+        <div className="w-full rounded-lg border border-white/70 bg-surface p-5 shadow-[0_18px_60px_rgba(68,52,42,0.08)] sm:p-7">
+          <div className="mb-6">
+            <span className="grid h-11 w-11 place-items-center rounded-lg bg-ink text-white">
+              <Dog aria-hidden className="h-6 w-6" />
+            </span>
+            <p className="mt-4 text-sm font-semibold uppercase tracking-[0.12em] text-muted">{brand.appName}</p>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight text-ink">Set up your first pet</h1>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Add only the basics now. PawChart will create a short Complete later list for vaccines, vet info, microchip, food preferences, and routines.
+            </p>
+          </div>
+
+          <form className="space-y-5" onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const recordInput = event.currentTarget.elements.namedItem("records") as HTMLInputElement | null;
+            onSubmit({
+              ageLabel: String(form.get("ageLabel") || ""),
+              breed: String(form.get("breed") || ""),
+              city: String(form.get("city") || ""),
+              email: String(form.get("email") || ""),
+              files: recordInput?.files ?? null,
+              firstName: String(form.get("firstName") || ""),
+              petName: String(form.get("petName") || ""),
+              setupStyle: String(form.get("setupStyle") || "simple") as OnboardingInput["setupStyle"],
+              species: String(form.get("species") || "dog") as PetSpecies,
+              weight: String(form.get("weight") || ""),
+            });
+          }}>
+            <section className="grid gap-3 sm:grid-cols-3">
+              <FormField defaultValue={ownerProfile.firstName} label="Your first name" name="firstName" required />
+              <FormField defaultValue={authEmail ?? ownerProfile.email} label="Email" name="email" type="email" />
+              <FormField defaultValue={ownerProfile.city} label="City" name="city" />
+            </section>
+
+            <section className="grid gap-3 sm:grid-cols-2">
+              <FormField label="Pet name" name="petName" required />
+              <SelectField defaultValue="dog" label="Pet type" name="species">
+                <option value="dog">Dog</option>
+                <option value="cat">Cat</option>
+              </SelectField>
+              <FormField label="Approximate age" name="ageLabel" placeholder="2 years, senior, unknown" />
+              <FormField label="Breed" name="breed" />
+              <FormField label="Weight" name="weight" placeholder="28 lb" />
+            </section>
+
+            <section className="grid gap-3 sm:grid-cols-2">
+              <label className="rounded-lg border border-line bg-background p-3">
+                <input className="mr-2" defaultChecked name="setupStyle" type="radio" value="simple" />
+                <span className="text-sm font-semibold text-ink">Start simple</span>
+                <span className="mt-1 block text-xs leading-5 text-muted">Create the profile now and fill in records later.</span>
+              </label>
+              <label className="rounded-lg border border-line bg-background p-3">
+                <input className="mr-2" disabled={!isLocalDemo} name="setupStyle" type="radio" value="upload" />
+                <span className="text-sm font-semibold text-ink">Upload records</span>
+                <span className="mt-1 block text-xs leading-5 text-muted">Add vaccine, adoption, or vet files. Parsing is mocked for now.</span>
+              </label>
+            </section>
+
+            {isLocalDemo ? (
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-ink">Optional records</span>
+                <input
+                  accept="application/pdf,image/*"
+                  className="block w-full rounded-lg border border-line bg-white px-3 py-3 text-sm"
+                  multiple
+                  name="records"
+                  type="file"
+                />
+              </label>
+            ) : (
+              <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+                Record uploads come after the first private beta persistence pass. Start simple now and add records once storage is connected.
+              </p>
+            )}
+
+            <SubmitButton label="Start PawChart" />
+          </form>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ProductionSignInView() {
+  return (
+    <main className="min-h-dvh bg-background px-5 py-8 text-foreground sm:px-8">
+      <section className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-lg items-center">
+        <div className="w-full rounded-lg border border-white/70 bg-surface p-5 shadow-[0_18px_60px_rgba(68,52,42,0.08)] sm:p-7">
+          <span className="grid h-11 w-11 place-items-center rounded-lg bg-ink text-white">
+            <Dog aria-hidden className="h-6 w-6" />
+          </span>
+          <p className="mt-4 text-sm font-semibold uppercase tracking-[0.12em] text-muted">{brand.appName}</p>
+          <h1 className="mt-2 text-3xl font-semibold leading-tight text-ink">Sign in to start</h1>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            Production accounts use authenticated pet records. The local demo playground is available only while developing on your machine.
+          </p>
+          <form action={signInWithGoogle} className="mt-5">
+            <button className="min-h-12 w-full rounded-lg bg-ink px-4 text-sm font-semibold text-white" type="submit">
+              Continue with Google
+            </button>
+          </form>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function DesktopSidebar({
   activeTab,
+  dataMode,
   isAuthenticated,
   onAdd,
   setActiveTab,
 }: {
   activeTab: Tab;
+  dataMode: PawChartDataMode;
   isAuthenticated: boolean;
   onAdd: () => void;
   setActiveTab: (tab: Tab) => void;
 }) {
+  const isLocalDemo = dataMode === "local-demo";
+
   return (
     <aside className="sticky top-0 hidden h-dvh w-72 shrink-0 border-r border-white/70 bg-surface/80 px-5 py-6 shadow-[20px_0_60px_rgba(68,52,42,0.06)] backdrop-blur lg:flex lg:flex-col">
       <div className="flex items-center gap-3 px-2">
@@ -1482,13 +2578,15 @@ function DesktopSidebar({
       </nav>
 
       <div className="mt-auto rounded-lg border border-line bg-background/80 p-4">
-        <p className="text-sm font-semibold text-ink">{isAuthenticated ? "Signed in" : "Demo mode"}</p>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          {isAuthenticated
-            ? "Google sign-in is connected. Pet records still use mock data until persistence is migrated."
-            : "Mock pets and care records are active. Sign in when you want to test Google OAuth."}
+        <p className="text-sm font-semibold text-ink">
+          {isLocalDemo ? "Local demo data" : isAuthenticated ? "Signed in" : "Sign in required"}
         </p>
-        {!isAuthenticated ? (
+        <p className="mt-2 text-sm leading-6 text-muted">
+          {isLocalDemo
+            ? "Full mock feature playground is active only in local development."
+            : "Production uses authenticated Supabase records and does not initialize demo pets or documents."}
+        </p>
+        {!isAuthenticated && isLocalDemo ? (
           <form action={signInWithGoogle} className="mt-3">
             <button className="min-h-11 w-full rounded-lg bg-ink px-3 text-sm font-semibold text-white" type="submit">
               Continue with Google
@@ -1720,24 +2818,38 @@ function NotificationPanel({
 function HomeView({
   lastUndo,
   logs,
+  onCreateKit,
   onLogForDate,
+  onOpenAttentionTask,
+  onOpenKit,
+  onOpenKitPrep,
+  onToggleKitItem,
+  onViewAllKits,
   onPrimary,
   onUndo,
   openTasks,
   ownerProfile,
   pets,
   scheduledTasks,
+  petKits,
   vaccines,
 }: {
   lastUndo: LogEntry | null;
   logs: LogEntry[];
+  onCreateKit: () => void;
   onLogForDate: (task: Task) => void;
+  onOpenAttentionTask: (task: Task) => void;
+  onOpenKit: (kit: PetKit) => void;
+  onOpenKitPrep: (item: KitPrepItem) => void;
+  onToggleKitItem: (kitId: string, itemId: string) => void;
+  onViewAllKits: () => void;
   onPrimary: (task: Task) => void;
   onUndo: (logId: string) => void;
   openTasks: Task[];
   ownerProfile: OwnerProfile;
   pets: Pet[];
   scheduledTasks: Task[];
+  petKits: PetKit[];
   vaccines: VaccineRecord[];
 }) {
   const overdueTasks = openTasks
@@ -1748,6 +2860,9 @@ function HomeView({
     .sort((a, b) => a.title.localeCompare(b.title));
   const todaysLogs = logs.filter((log) => log.occurredOn === todayValue);
   const attentionTasks = getHomeAttentionTasks(scheduledTasks, vaccines);
+  const travelPrepItems = getKitPrepItems(petKits)
+    .filter((item) => item.endDate >= todayValue && item.date <= addDays(todayValue, 28))
+    .sort((a, b) => a.date.localeCompare(b.date));
   const duePets = pets.filter((pet) => openTasks.some((task) => task.petId === pet.id));
   const homeSummary =
     openTasks.length === 0
@@ -1828,21 +2943,247 @@ function HomeView({
       <section className="space-y-3">
         <SectionTitle title="Needs attention" />
         <div className="rounded-lg border border-line bg-surface p-4 lg:p-5">
-          {attentionTasks.length === 0 ? (
+          {attentionTasks.length === 0 && travelPrepItems.length === 0 ? (
             <p className="text-sm leading-6 text-muted">
-              No upcoming health items need attention in the next 4 weeks.
+              No upcoming health or list prep items need attention in the next 4 weeks.
             </p>
           ) : (
             <div className="divide-y divide-line">
               {attentionTasks.slice(0, 5).map((task) => {
                 const pet = pets.find((item) => item.id === task.petId) ?? pets[0];
 
-                return <HomeAttentionRow key={task.id} pet={pet} task={task} />;
+                return <HomeAttentionRow key={task.id} onOpen={() => onOpenAttentionTask(task)} pet={pet} task={task} />;
               })}
+              {travelPrepItems.slice(0, 4).map((item) => (
+                <HomeTravelPrepRow item={item} key={item.id} onOpen={() => onOpenKitPrep(item)} pets={pets} />
+              ))}
             </div>
           )}
         </div>
       </section>
+
+      <HomeListsKitsSection
+        onCreateKit={onCreateKit}
+        onOpenKit={onOpenKit}
+        onToggleKitItem={onToggleKitItem}
+        onViewAll={onViewAllKits}
+        petKits={petKits}
+        pets={pets}
+      />
+    </div>
+  );
+}
+
+function HomeListsKitsSection({
+  onCreateKit,
+  onOpenKit,
+  onToggleKitItem,
+  onViewAll,
+  petKits,
+  pets,
+}: {
+  onCreateKit: () => void;
+  onOpenKit: (kit: PetKit) => void;
+  onToggleKitItem: (kitId: string, itemId: string) => void;
+  onViewAll: () => void;
+  petKits: PetKit[];
+  pets: Pet[];
+}) {
+  const visibleKits = [...petKits]
+    .sort((a, b) => {
+      if (a.startDate && b.startDate) return a.startDate.localeCompare(b.startDate);
+      if (a.startDate) return -1;
+      if (b.startDate) return 1;
+      return a.title.localeCompare(b.title);
+    })
+    .slice(0, 4);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex min-h-11 items-center justify-between gap-3">
+        <SectionTitle title="Lists & kits" />
+        <div className="flex shrink-0 gap-2">
+          <button
+            className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink"
+            onClick={onViewAll}
+            type="button"
+          >
+            View all
+          </button>
+          <button
+            className="min-h-10 rounded-lg bg-ink px-3 text-sm font-semibold text-white"
+            onClick={onCreateKit}
+            type="button"
+          >
+            Create list
+          </button>
+        </div>
+      </div>
+
+      {visibleKits.length === 0 ? (
+        <p className="rounded-lg border border-line bg-surface p-4 text-sm leading-6 text-muted">
+          Create packing, travel, picnic, boarding, grooming, or custom prep lists for your pets.
+        </p>
+      ) : (
+        <div className="grid gap-3 lg:grid-cols-2">
+          {visibleKits.map((kit) => (
+            <HomeKitRow
+              key={kit.id}
+              kit={kit}
+              onOpen={() => onOpenKit(kit)}
+              onToggleItem={(itemId) => onToggleKitItem(kit.id, itemId)}
+              pets={pets}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HomeKitRow({
+  kit,
+  onOpen,
+  onToggleItem,
+  pets,
+}: {
+  kit: PetKit;
+  onOpen: () => void;
+  onToggleItem: (itemId: string) => void;
+  pets: Pet[];
+}) {
+  const kitPets = kit.petIds.map((petId) => pets.find((pet) => pet.id === petId)).filter(Boolean) as Pet[];
+  const allItems = kitUnifiedItems(kit);
+  const visibleItems = allItems.slice(0, 3);
+  const hiddenCount = Math.max(0, allItems.length - visibleItems.length);
+  const progress = kitProgressParts(kit);
+
+  return (
+    <article className="min-w-0 overflow-hidden rounded-lg border border-white/70 bg-surface p-4 shadow-[0_14px_36px_rgba(68,52,42,0.07)]">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#ffe3c7] text-ink">
+          <ClipboardList aria-hidden className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <button className="min-w-0 text-left" onClick={onOpen} type="button">
+              <h3 className="truncate text-sm font-semibold text-ink">{kit.title}</h3>
+            </button>
+            <KitProgressChips progress={progress} />
+          </div>
+          <p className="mt-1 truncate text-sm text-muted">{kitContextLabel(kit)}</p>
+          <div className="mt-2 flex min-w-0 items-center gap-2">
+            <CompactPetStack pets={kitPets} />
+            <span className="truncate text-xs font-semibold text-muted">{compactPetNames(kitPets)}</span>
+          </div>
+        </div>
+      </div>
+
+      {visibleItems.length > 0 ? (
+        <div className="mt-3 divide-y divide-line rounded-lg bg-background/60">
+          {visibleItems.map((item) => (
+            <HomeKitItemRow item={item} key={item.id} onToggle={() => onToggleItem(item.id)} />
+          ))}
+        </div>
+      ) : null}
+
+      {hiddenCount > 0 || visibleItems.length === 0 ? (
+        <button
+          className="mt-3 min-h-10 rounded-lg px-1 text-sm font-semibold text-primary"
+          onClick={onOpen}
+          type="button"
+        >
+          {hiddenCount > 0 ? `View full list (${hiddenCount} more)` : "View full list"}
+        </button>
+      ) : null}
+    </article>
+  );
+}
+
+function HomeKitItemRow({ item, onToggle }: { item: KitUnifiedItem; onToggle: () => void }) {
+  const meta = kitItemMeta(item);
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-2 py-2">
+      <button
+        aria-label={item.completed ? `Mark ${item.label} incomplete` : `Mark ${item.label} complete`}
+        className={cn(
+          "grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition active:scale-[0.98]",
+          item.completed ? "border-primary bg-primary text-white" : "border-line bg-white text-muted",
+        )}
+        onClick={onToggle}
+        type="button"
+      >
+        <Check aria-hidden className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className={cn("truncate text-sm font-semibold", item.completed ? "text-muted line-through" : "text-ink")}>
+          {item.label}
+        </p>
+        {meta ? <p className="truncate text-xs text-muted">{meta}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function CompactPetStack({ pets }: { pets: Pet[] }) {
+  return (
+    <span className="flex shrink-0 -space-x-2">
+      {pets.slice(0, 3).map((pet) => (
+        <span className="relative block h-7 w-7 overflow-hidden rounded-full border-2 border-surface bg-primary/10" key={pet.id}>
+          <Image alt="" className="h-full w-full object-cover" height={28} src={pet.photo} width={28} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function compactPetNames(pets: Pet[]) {
+  if (pets.length === 0) return "No pets";
+  if (pets.length === 1) return pets[0].name;
+  if (pets.length === 2) return `${pets[0].name} + ${pets[1].name}`;
+  return `${pets[0].name} + ${pets.length - 1} more`;
+}
+
+function KitProgressChips({ progress }: { progress: ReturnType<typeof kitProgressParts> }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <span className="rounded-full bg-background px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">
+        {progress.done}
+      </span>
+      {progress.documentIssues ? (
+        <span className="rounded-full bg-[#ffe7a8] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink">
+          {progress.documentIssues}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function HomeTravelPrepRow({ item, onOpen, pets }: { item: KitPrepItem; onOpen: () => void; pets: Pet[] }) {
+  const tripPets = item.petIds.map((petId) => pets.find((pet) => pet.id === petId)?.name).filter(Boolean);
+
+  return (
+    <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#ffe3c7] text-ink">
+        <ClipboardList aria-hidden className="h-5 w-5" />
+      </span>
+      <button
+        className="min-w-0 flex-1 rounded-lg text-left transition hover:bg-background focus:outline-none focus:ring-2 focus:ring-primary/25 active:scale-[0.995]"
+        onClick={onOpen}
+        type="button"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="truncate text-sm font-semibold text-ink">{item.title}</p>
+          <span className="rounded-full bg-background px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">
+            {item.prepLabel}
+          </span>
+        </div>
+        <p className="mt-1 truncate text-sm text-muted">
+          {relativeDateLabel(item.date)} - {item.tripTitle}
+          {tripPets.length ? ` - ${tripPets.join(", ")}` : ""}
+        </p>
+      </button>
     </div>
   );
 }
@@ -1973,13 +3314,17 @@ function HomeRecentLogRow({
   );
 }
 
-function HomeAttentionRow({ pet, task }: { pet: Pet; task: Task }) {
+function HomeAttentionRow({ onOpen, pet, task }: { onOpen: () => void; pet: Pet; task: Task }) {
   return (
     <div className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
       <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-lg", taskTone(task).icon)}>
         <TaskIcon task={task} />
       </span>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <button
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-left transition hover:bg-background focus:outline-none focus:ring-2 focus:ring-primary/25 active:scale-[0.995]"
+        onClick={onOpen}
+        type="button"
+      >
         <PetAvatar pet={pet} size="xs" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -1994,7 +3339,7 @@ function HomeAttentionRow({ pet, task }: { pet: Pet; task: Task }) {
             {relativeDateLabel(task.dueDate)} - {task.dueLabel}
           </p>
         </div>
-      </div>
+      </button>
     </div>
   );
 }
@@ -2055,7 +3400,7 @@ type CalendarItem = {
   task?: Task;
   tone: string;
   title: string;
-  type: "completed" | "due" | "observation" | "visit";
+  type: "completed" | "due" | "observation" | "travel" | "visit";
 };
 
 type CalendarPlanItem = {
@@ -2087,6 +3432,7 @@ function CalendarView({
   selectedPet,
   selectedPetId,
   setSelectedPetId,
+  petKits,
   vetProviders,
   vetVisits,
   vaccines,
@@ -2103,6 +3449,7 @@ function CalendarView({
   selectedPet: Pet;
   selectedPetId: string;
   setSelectedPetId: (petId: string) => void;
+  petKits: PetKit[];
   vetProviders: VetProvider[];
   vetVisits: VetVisit[];
   vaccines: VaccineRecord[];
@@ -2118,6 +3465,7 @@ function CalendarView({
   const petObservations = observations.filter((observation) => observation.petId === selectedPet.id);
   const petVetVisits = vetVisits.filter((visit) => visit.petId === selectedPet.id);
   const petVaccines = vaccines.filter((vaccine) => vaccine.petId === selectedPet.id);
+  const petKitPrepItems = getKitPrepItems(petKits).filter((item) => item.petIds.includes(selectedPet.id));
 
   const calendarItems: CalendarItem[] = [
     ...petTasks.map((task) => ({
@@ -2148,7 +3496,12 @@ function CalendarView({
     ...petObservations.map((observation) => ({
       id: `observation-${observation.id}`,
       date: observation.observedOn,
-      detail: `${capitalize(observation.severity)} - ${observation.trigger || "No trigger set"}`,
+      detail: [
+        capitalize(observation.category),
+        `${capitalize(observation.severity)} severity`,
+        observation.trigger ? `Trigger: ${observation.trigger}` : "",
+        observation.notes,
+      ].filter(Boolean).join(" - "),
       meta: "Observation",
       icon: ClipboardList,
       title: observation.title,
@@ -2168,6 +3521,16 @@ function CalendarView({
         type: "visit" as const,
       };
     }),
+    ...petKitPrepItems.map((item) => ({
+      id: `travel-${item.id}`,
+      date: item.date,
+      detail: [item.tripTitle, item.destination].filter(Boolean).join(" - "),
+      meta: item.prepLabel,
+      icon: ClipboardList,
+      title: item.title,
+      tone: "bg-[#ffe3c7] text-ink",
+      type: "travel" as const,
+    })),
   ];
 
   const selectedItems = calendarItems.filter((item) => item.date === selectedDate);
@@ -2219,6 +3582,16 @@ function CalendarView({
           typeLabel: "Vet follow-up",
         };
       }),
+    ...petKitPrepItems.map((item) => ({
+      date: item.date,
+      dateLabel: relativeDateLabel(item.date),
+      detail: [item.tripTitle, item.destination].filter(Boolean).join(" - "),
+      id: `plan-travel-${item.id}`,
+      icon: ClipboardList,
+      title: item.title,
+      tone: "bg-[#ffe3c7] text-ink",
+      typeLabel: item.prepLabel,
+    })),
   ]
     .filter((item) => isDateInRange(item.date, todayValue, planningEndDate))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -2370,7 +3743,7 @@ function CalendarView({
 
       <section className="space-y-3">
         <div className="flex min-h-11 flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Selected day</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Selected day activity</h2>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-surface px-3 py-1 text-xs font-semibold text-muted">
               {selectedItems.length} {selectedItems.length === 1 ? "item" : "items"}
@@ -2387,9 +3760,9 @@ function CalendarView({
         <div className="rounded-lg border border-line bg-surface p-4 shadow-sm">
           {selectedItems.length === 0 ? (
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-ink">Nothing scheduled for {selectedPet.name}.</p>
+              <p className="text-sm font-semibold text-ink">No activity for {selectedPet.name}.</p>
               <p className="text-sm leading-6 text-muted">
-                Care due today, completed logs, vet visits, and observations will appear here.
+                Care, logs, observations, vet visits, and list prep for this date will appear here.
               </p>
             </div>
           ) : (
@@ -3036,6 +4409,10 @@ function HealthView({
                 (document) =>
                   document.recordType === "vaccine_record" && document.recordId === vaccine.id,
               );
+              const latestProof = latestDocument(attachedDocuments);
+              const olderProofFiles = latestProof
+                ? attachedDocuments.filter((document) => document.id !== latestProof.id)
+                : [];
 
               return (
                 <article className="rounded-lg border border-line bg-surface p-4 shadow-sm" key={vaccine.id}>
@@ -3068,20 +4445,20 @@ function HealthView({
                   <p className="mt-2 break-words text-xs font-medium leading-5 text-muted">
                     Given {vaccine.dateGiven} - Expires {vaccine.expires} - {vaccine.provider}
                   </p>
-                  {attachedDocuments.length > 0 ? (
-                    <div className="mt-3">
-                      <DocumentList
-                        documents={attachedDocuments}
-                        emptyText="No proof attached."
-                        onPreview={(document) =>
-                          onRecordDetail(
-                            document.title,
-                            "Preview placeholder. Real preview will open PDFs and images from Supabase Storage.",
-                          )
-                        }
-                        compact
-                      />
-                    </div>
+                  <p className="mt-2 text-xs leading-5 text-muted">
+                    Add proof uploads a new file. Older files stay saved.
+                  </p>
+                  {latestProof ? (
+                    <VaccineProofFiles
+                      latestDocument={latestProof}
+                      olderDocuments={olderProofFiles}
+                      onPreview={(document) =>
+                        onRecordDetail(
+                          document.title,
+                          "Preview placeholder. Real preview will open PDFs and images from Supabase Storage.",
+                        )
+                      }
+                    />
                   ) : null}
                 </article>
               );
@@ -3305,6 +4682,23 @@ function PetSwitcher({
   selectedPetId: string;
   setSelectedPetId: (petId: string) => void;
 }) {
+  if (pets.length <= 1) {
+    if (!onAction) return null;
+
+    return (
+      <section className="flex min-h-11 items-center justify-between gap-3">
+        <SectionTitle title="Pets" />
+        <button
+          className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-primary"
+          onClick={onAction}
+          type="button"
+        >
+          Add more +
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3">
       <SectionTitle title="Pets" />
@@ -3652,16 +5046,20 @@ function VetProviderForm({
 }
 
 function OwnerProfileForm({
+  appMode,
   authEmail,
   isAuthenticated,
   onSubmit,
   ownerProfile,
 }: {
+  appMode: PawChartDataMode;
   authEmail: string | null;
   isAuthenticated: boolean;
   onSubmit: (ownerProfile: OwnerProfile) => void;
   ownerProfile: OwnerProfile;
 }) {
+  const isLocalDemo = appMode === "local-demo";
+
   return (
     <div className="space-y-4">
       <form className="space-y-4" onSubmit={(event) => {
@@ -3686,14 +5084,18 @@ function OwnerProfileForm({
           <FormField defaultValue={ownerProfile.city} label="City" name="city" />
         </div>
         <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-          {isAuthenticated
-            ? `Signed in with Google${authEmail ? ` as ${authEmail}` : ""}. Pet data still uses mock records until persistence is migrated.`
-            : "Prototype profile only. Sign in with Google to test the real auth session."}
+          {isLocalDemo
+            ? isAuthenticated
+              ? `Signed in with Google${authEmail ? ` as ${authEmail}` : ""}. Local demo records remain active in development.`
+              : "Local demo profile only. Sign in with Google to test the auth session."
+            : `Signed in with Google${authEmail ? ` as ${authEmail}` : ""}.`}
         </p>
         <SubmitButton label="Save your info" />
       </form>
       <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-        Email and identity come from Google OAuth. The editable fields are still local mock profile state until profile persistence is wired.
+        {isLocalDemo
+          ? "Email and identity come from Google OAuth. Editable fields are still local demo profile state until profile persistence is wired."
+          : "Email and identity come from Google OAuth. Profile details are ready to map to Supabase profile persistence."}
       </p>
       {isAuthenticated ? (
         <form action={signOut}>
@@ -4382,6 +5784,617 @@ function TrainingCueDetails({
   );
 }
 
+function ListsKitsModal({
+  allPets,
+  documents,
+  focusedKitId,
+  onAddChecklistItem,
+  onAttachItemDocument,
+  onAttachExistingDocument,
+  onCreateTrip,
+  onDeleteKit,
+  onEditKit,
+  onPreviewDocument,
+  onRemoveChecklistItem,
+  onResetKit,
+  onToggleChecklistItem,
+  onUploadItemDocument,
+  onUploadDocument,
+  pets,
+  selectedPet,
+  templates,
+  trips,
+}: {
+  allPets?: boolean;
+  documents: RecordDocument[];
+  focusedKitId?: string;
+  onAddChecklistItem: (input: KitChecklistItemInput & { tripId: string }) => void;
+  onAttachItemDocument: (trip: PetKit, item: KitChecklistItem) => void;
+  onAttachExistingDocument: (trip: PetKit, link: KitDocumentLink) => void;
+  onCreateTrip: (templateId?: string) => void;
+  onDeleteKit: (trip: PetKit) => void;
+  onEditKit: (trip: PetKit) => void;
+  onPreviewDocument: (document: RecordDocument) => void;
+  onRemoveChecklistItem: (trip: PetKit, item: KitUnifiedItem) => void;
+  onResetKit: (trip: PetKit) => void;
+  onToggleChecklistItem: (tripId: string, itemId: string) => void;
+  onUploadItemDocument: (tripId: string, itemId: string, files: FileList | null) => void;
+  onUploadDocument: (tripId: string, documentLinkId: string, files: FileList | null) => void;
+  pets: Pet[];
+  selectedPet: Pet;
+  templates: KitTemplate[];
+  trips: PetKit[];
+}) {
+  return (
+    <div className="space-y-5">
+      <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+        Create packing, travel, picnic, boarding, grooming, and custom prep lists. Travel document rows are suggestions;
+        confirm current requirements with your airline, destination country, and veterinarian.
+      </p>
+
+      <section className="space-y-3">
+        <div className="flex min-h-10 items-center justify-between gap-3">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Saved lists</h2>
+          <button className="min-h-10 rounded-lg bg-ink px-3 text-sm font-semibold text-white" onClick={() => onCreateTrip()} type="button">
+            Create list
+          </button>
+        </div>
+        {trips.length === 0 ? (
+          <p className="rounded-lg border border-line bg-surface p-4 text-sm leading-6 text-muted">
+            {allPets
+              ? "No lists yet. Start blank or use a reusable template below."
+              : `No lists yet for ${selectedPet.name}. Start blank or use a reusable template below.`}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {[...trips].sort((a, b) => (a.id === focusedKitId ? -1 : b.id === focusedKitId ? 1 : 0)).map((trip) => (
+              <PetKitCard
+                documents={documents}
+                focused={trip.id === focusedKitId}
+                key={trip.id}
+                onAddChecklistItem={onAddChecklistItem}
+                onAttachItemDocument={onAttachItemDocument}
+                onAttachExistingDocument={onAttachExistingDocument}
+                onDeleteKit={onDeleteKit}
+                onEditKit={onEditKit}
+                onPreviewDocument={onPreviewDocument}
+                onRemoveChecklistItem={onRemoveChecklistItem}
+                onResetKit={onResetKit}
+                onToggleChecklistItem={onToggleChecklistItem}
+                onUploadItemDocument={onUploadItemDocument}
+                onUploadDocument={onUploadDocument}
+                pets={pets}
+                trip={trip}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Reusable templates</h2>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {templates.map((template) => (
+            <div className="rounded-lg border border-line bg-background p-3" key={template.id}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">{template.name}</p>
+                  <p className="mt-1 text-xs capitalize text-muted">{template.category}</p>
+                </div>
+                <button
+                  className="min-h-10 shrink-0 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-primary"
+                  onClick={() => onCreateTrip(template.id)}
+                  type="button"
+                >
+                  Use
+                </button>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-muted">
+                {template.checklistItems.map((item) => item.label).join(", ")}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PetKitCard({
+  documents,
+  focused,
+  onAddChecklistItem,
+  onAttachItemDocument,
+  onAttachExistingDocument,
+  onDeleteKit,
+  onEditKit,
+  onPreviewDocument,
+  onRemoveChecklistItem,
+  onResetKit,
+  onToggleChecklistItem,
+  onUploadItemDocument,
+  onUploadDocument,
+  pets,
+  trip,
+}: {
+  documents: RecordDocument[];
+  focused?: boolean;
+  onAddChecklistItem: (input: KitChecklistItemInput & { tripId: string }) => void;
+  onAttachItemDocument: (trip: PetKit, item: KitChecklistItem) => void;
+  onAttachExistingDocument: (trip: PetKit, link: KitDocumentLink) => void;
+  onDeleteKit: (trip: PetKit) => void;
+  onEditKit: (trip: PetKit) => void;
+  onPreviewDocument: (document: RecordDocument) => void;
+  onRemoveChecklistItem: (trip: PetKit, item: KitUnifiedItem) => void;
+  onResetKit: (trip: PetKit) => void;
+  onToggleChecklistItem: (tripId: string, itemId: string) => void;
+  onUploadItemDocument: (tripId: string, itemId: string, files: FileList | null) => void;
+  onUploadDocument: (tripId: string, documentLinkId: string, files: FileList | null) => void;
+  pets: Pet[];
+  trip: PetKit;
+}) {
+  const tripPets = trip.petIds.map((petId) => pets.find((pet) => pet.id === petId)).filter(Boolean) as Pet[];
+  const unifiedItems = kitUnifiedItems(trip);
+  const attachedDocumentIds = new Set(unifiedItems.map((item) => item.documentId).filter((id): id is string => Boolean(id)));
+  const tripDocuments = documents.filter((document) => trip.petIds.includes(document.petId) || attachedDocumentIds.has(document.id));
+  const progress = kitProgressParts(trip);
+  const [showNotes, setShowNotes] = useState(false);
+
+  return (
+    <article className={cn("space-y-4 rounded-lg border bg-surface p-4", focused ? "border-primary shadow-[0_0_0_3px_rgba(42,125,111,0.12)]" : "border-line")}>
+      <div className="min-w-0 space-y-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <h3 className="break-words text-base font-semibold text-ink">{trip.title}</h3>
+              <p className="mt-1 break-words text-sm text-muted">
+                {kitContextLabel(trip)}
+              </p>
+            </div>
+            <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
+              <KitProgressChips progress={progress} />
+              <IconButton icon={Pencil} label="Edit list" onClick={() => onEditKit(trip)} />
+              <IconButton icon={Trash2} label="Delete list" onClick={() => onDeleteKit(trip)} />
+            </div>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <CompactPetStack pets={tripPets} />
+              <span className="truncate text-xs font-semibold text-muted">{compactPetNames(tripPets)}</span>
+            </div>
+            {trip.notes ? (
+              <button
+                className="min-h-9 shrink-0 rounded-lg px-2 text-xs font-semibold text-primary"
+                onClick={() => setShowNotes((current) => !current)}
+                type="button"
+              >
+                Notes
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {showNotes && trip.notes ? (
+        <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">{trip.notes}</p>
+      ) : null}
+
+      <section className="space-y-2">
+        <div className="flex min-h-10 items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Items</p>
+          {unifiedItems.length > 0 ? (
+            <button
+              className="min-h-10 rounded-lg px-2 text-sm font-semibold text-primary"
+              onClick={() => onResetKit(trip)}
+              type="button"
+            >
+              Reset list
+            </button>
+          ) : null}
+        </div>
+        <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-background">
+          {unifiedItems.length === 0 ? (
+            <p className="px-3 py-3 text-sm leading-6 text-muted">Add task, document, or link items to this list.</p>
+          ) : null}
+          {unifiedItems.map((item) => {
+            const attachedDocument = item.documentId ? tripDocuments.find((document) => document.id === item.documentId) : undefined;
+            return (
+              <KitChecklistRow
+                attachedDocument={attachedDocument}
+                item={item}
+                key={item.id}
+                onAttachExisting={() => {
+                  if (item.source === "document-link") {
+                    const link = trip.documentLinks.find((documentLink) => documentLink.id === item.id);
+                    if (link) onAttachExistingDocument(trip, link);
+                    return;
+                  }
+                  onAttachItemDocument(trip, item);
+                }}
+                onPreviewDocument={onPreviewDocument}
+                onRemove={() => onRemoveChecklistItem(trip, item)}
+                onToggle={() => onToggleChecklistItem(trip.id, item.id)}
+                onUpload={(files) => {
+                  if (item.source === "document-link") {
+                    onUploadDocument(trip.id, item.id, files);
+                    return;
+                  }
+                  onUploadItemDocument(trip.id, item.id, files);
+                }}
+                pet={pets.find((pet) => pet.id === item.petId)}
+              />
+            );
+          })}
+        </div>
+        <KitChecklistItemForm pets={tripPets} onSubmit={(input) => onAddChecklistItem({ ...input, tripId: trip.id })} />
+      </section>
+
+    </article>
+  );
+}
+
+function KitChecklistRow({
+  attachedDocument,
+  item,
+  onAttachExisting,
+  onPreviewDocument,
+  onRemove,
+  onToggle,
+  onUpload,
+  pet,
+}: {
+  attachedDocument?: RecordDocument;
+  item: KitUnifiedItem;
+  onAttachExisting: () => void;
+  onPreviewDocument: (document: RecordDocument) => void;
+  onRemove: () => void;
+  onToggle: () => void;
+  onUpload: (files: FileList | null) => void;
+  pet?: Pet;
+}) {
+  const meta = [pet?.name, kitItemMeta(item)].filter(Boolean).join(" · ");
+  const showTypePill = item.itemType === "document" || item.itemType === "link";
+
+  return (
+    <div className="flex min-w-0 items-center gap-3 px-3 py-2">
+      <button
+        aria-label={item.completed ? `Mark ${item.label} incomplete` : `Mark ${item.label} complete`}
+        className={cn(
+          "grid h-11 w-11 shrink-0 place-items-center rounded-lg border transition active:scale-[0.98]",
+          item.completed ? "border-primary bg-primary text-white" : "border-line bg-white text-muted",
+        )}
+        onClick={onToggle}
+        type="button"
+      >
+        <Check aria-hidden className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <p className={cn("break-words text-sm font-semibold", item.completed ? "text-muted line-through" : "text-ink")}>
+            {item.label}
+          </p>
+          {showTypePill ? (
+            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">
+              {item.itemType}
+            </span>
+          ) : null}
+        </div>
+        {meta ? <p className="mt-0.5 truncate text-xs leading-5 text-muted">{meta}</p> : null}
+        {attachedDocument ? (
+          <button
+            className="mt-1 max-w-full truncate text-left text-xs font-semibold text-primary"
+            onClick={() => onPreviewDocument(attachedDocument)}
+            type="button"
+          >
+            {attachedDocument.title}
+          </button>
+        ) : null}
+        {item.resourceUrl ? (
+          <a
+            className="mt-1 inline-flex min-h-8 max-w-full items-center gap-1 truncate rounded-lg px-0 text-xs font-semibold text-primary"
+            href={item.resourceUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <Link2 aria-hidden className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{item.resourceLabel || compactUrlLabel(item.resourceUrl)}</span>
+          </a>
+        ) : null}
+      </div>
+      {item.itemType === "document" ? (
+        <div className="flex shrink-0 gap-1">
+          <IconButton icon={Paperclip} label="Attach existing" onClick={onAttachExisting} />
+          <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-lg border border-line bg-white text-ink transition active:scale-[0.98]" title="Upload document">
+            <Upload aria-hidden className="h-5 w-5" />
+            <span className="sr-only">Upload document</span>
+            <input
+              accept="application/pdf,image/*"
+              className="sr-only"
+              onChange={(event) => {
+                onUpload(event.target.files);
+                event.target.value = "";
+              }}
+              type="file"
+            />
+          </label>
+          <IconButton icon={Trash2} label="Remove item" onClick={onRemove} />
+        </div>
+      ) : (
+        <IconButton icon={Trash2} label="Remove item" onClick={onRemove} />
+      )}
+    </div>
+  );
+}
+
+function KitChecklistItemForm({
+  onSubmit,
+  pets,
+}: {
+  onSubmit: (input: KitChecklistItemInput) => void;
+  pets: Pet[];
+}) {
+  const [itemType, setItemType] = useState<NonNullable<KitChecklistItem["itemType"]>>("task");
+  const showPetSelect = itemType === "document" && pets.length > 1;
+
+  return (
+    <form className="rounded-lg border border-dashed border-line bg-background/70 p-3" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit({
+        documentType: String(form.get("documentType") || "custom") as KitChecklistItem["documentType"],
+        itemType: String(form.get("itemType") || "task") as NonNullable<KitChecklistItem["itemType"]>,
+        label: String(form.get("label") || ""),
+        petId: String(form.get("petId") || pets[0]?.id || ""),
+        resourceLabel: String(form.get("resourceLabel") || ""),
+        resourceUrl: String(form.get("resourceUrl") || ""),
+      });
+      event.currentTarget.reset();
+      setItemType("task");
+    }}>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
+        <select
+          className="h-11 rounded-lg border border-line bg-white px-3 text-sm"
+          name="itemType"
+          onChange={(event) => setItemType(event.target.value as NonNullable<KitChecklistItem["itemType"]>)}
+          value={itemType}
+        >
+          <option value="task">Task</option>
+          <option value="document">Document</option>
+          <option value="link">Link</option>
+        </select>
+        <input className="h-11 rounded-lg border border-line bg-white px-3 text-sm" name="label" placeholder="Add item" />
+        <button className="min-h-11 rounded-lg bg-ink px-3 text-sm font-semibold text-white" type="submit">
+          Add
+        </button>
+      </div>
+      {itemType === "document" ? (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          {showPetSelect ? (
+            <select className="h-11 rounded-lg border border-line bg-white px-3 text-sm" name="petId">
+              {pets.map((pet) => (
+                <option key={pet.id} value={pet.id}>{pet.name}</option>
+              ))}
+            </select>
+          ) : (
+            <input name="petId" type="hidden" value={pets[0]?.id ?? ""} />
+          )}
+          <select className="h-11 rounded-lg border border-line bg-white px-3 text-sm" defaultValue="custom" name="documentType">
+            <option value="custom">Custom document</option>
+            <option value="rabies-proof">Rabies proof</option>
+            <option value="vaccination-records">Vaccination records</option>
+            <option value="registration">Registration</option>
+            <option value="microchip-info">Microchip info</option>
+            <option value="health-certificate">Health certificate</option>
+            <option value="airline-forms">Airline forms</option>
+            <option value="insurance">Insurance</option>
+          </select>
+        </div>
+      ) : null}
+      {itemType === "link" ? (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <input className="h-11 rounded-lg border border-line bg-white px-3 text-sm" name="resourceLabel" placeholder="Link label" />
+          <input className="h-11 rounded-lg border border-line bg-white px-3 text-sm" name="resourceUrl" placeholder="https://..." />
+        </div>
+      ) : null}
+    </form>
+  );
+}
+
+function KitAttachChecklistDocumentForm({
+  documents,
+  item,
+  onSubmit,
+}: {
+  documents: RecordDocument[];
+  item: KitChecklistItem;
+  onSubmit: (documentId: string) => void;
+}) {
+  const sortedDocuments = sortDocumentsByCreatedAt(documents);
+
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit(String(form.get("documentId") || ""));
+    }}>
+      <p className="text-sm leading-6 text-muted">
+        Attach an existing private document to {item.label}. Uploading a new PDF or image is available directly from the list row.
+      </p>
+      <SelectField defaultValue={item.documentId ?? ""} label="Document" name="documentId">
+        <option value="">Choose a document</option>
+        {sortedDocuments.map((document) => (
+          <option key={document.id} value={document.id}>
+            {document.title} {document.versionLabel ? `(${document.versionLabel})` : ""}
+          </option>
+        ))}
+      </SelectField>
+      {sortedDocuments.length === 0 ? (
+        <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+          No documents are saved for this pet yet. Use Upload on the list row to add one.
+        </p>
+      ) : null}
+      <SubmitButton label="Attach document" />
+    </form>
+  );
+}
+
+function KitAttachDocumentForm({
+  documents,
+  link,
+  onSubmit,
+}: {
+  documents: RecordDocument[];
+  link: KitDocumentLink;
+  onSubmit: (documentId: string) => void;
+}) {
+  const sortedDocuments = sortDocumentsByCreatedAt(documents);
+
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit(String(form.get("documentId") || ""));
+    }}>
+      <p className="text-sm leading-6 text-muted">
+        Attach an existing private document to {link.label}. Uploading a new file is available directly from the list row.
+      </p>
+      <SelectField defaultValue={link.documentId ?? ""} label="Document" name="documentId">
+        <option value="">Choose a document</option>
+        {sortedDocuments.map((document) => (
+          <option key={document.id} value={document.id}>
+            {document.title} {document.versionLabel ? `(${document.versionLabel})` : ""}
+          </option>
+        ))}
+      </SelectField>
+      {sortedDocuments.length === 0 ? (
+        <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+          No documents are saved for this pet yet. Use Upload on the list row to add one.
+        </p>
+      ) : null}
+      <SubmitButton label="Attach document" />
+    </form>
+  );
+}
+
+function KitDocumentItemForm({
+  link,
+  onSubmit,
+  pets,
+}: {
+  link?: KitDocumentLink;
+  onSubmit: (input: KitDocumentItemInput) => void;
+  pets: Pet[];
+}) {
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit({
+        documentType: String(form.get("documentType") || "custom") as KitDocumentLink["documentType"],
+        expiresOn: String(form.get("expiresOn") || ""),
+        label: String(form.get("label") || ""),
+        petId: String(form.get("petId") || pets[0]?.id || link?.petId || ""),
+      });
+    }}>
+      <FormField defaultValue={link?.label} label="Label" name="label" placeholder="Airline form, health certificate, city registration" required />
+      <SelectField defaultValue={link?.petId ?? pets[0]?.id ?? ""} label="Pet" name="petId">
+        {pets.map((pet) => (
+          <option key={pet.id} value={pet.id}>
+            {pet.name}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField defaultValue={link?.documentType ?? "custom"} label="Document type" name="documentType">
+        <option value="custom">Custom</option>
+        <option value="rabies-proof">Rabies proof</option>
+        <option value="vaccination-records">Vaccination records</option>
+        <option value="registration">Registration</option>
+        <option value="microchip-info">Microchip info</option>
+        <option value="health-certificate">Health certificate</option>
+        <option value="airline-forms">Airline forms</option>
+        <option value="insurance">Insurance</option>
+      </SelectField>
+      <FormField defaultValue={link?.expiresOn} label="Expires on" name="expiresOn" type="date" />
+      <SubmitButton label={link ? "Save document item" : "Add document item"} />
+    </form>
+  );
+}
+
+function CreatePetKitForm({
+  kit,
+  onSubmit,
+  pets,
+  selectedPetId,
+  templateId,
+  templates,
+}: {
+  onSubmit: (input: {
+    destination: string;
+    endDate: string;
+    notes: string;
+    petIds: string[];
+    startDate: string;
+    templateId: string;
+    title: string;
+  }) => void;
+  kit?: PetKit;
+  pets: Pet[];
+  selectedPetId: string;
+  templateId?: string;
+  templates: KitTemplate[];
+}) {
+  const isEditing = Boolean(kit);
+  const defaultTemplateId =
+    kit?.sourceTemplateId ?? templateId ?? templates.find((template) => template.id === "template-blank")?.id ?? templates[0]?.id ?? "";
+
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit({
+        destination: String(form.get("destination") || ""),
+        endDate: String(form.get("endDate") || ""),
+        notes: String(form.get("notes") || ""),
+        petIds: form.getAll("petIds").map(String),
+        startDate: String(form.get("startDate") || todayValue),
+        templateId: String(form.get("templateId") || defaultTemplateId),
+        title: String(form.get("title") || ""),
+      });
+    }}>
+      {isEditing ? (
+        <input name="templateId" type="hidden" value={defaultTemplateId} />
+      ) : (
+        <SelectField defaultValue={defaultTemplateId} label="Template" name="templateId">
+          {templates.map((template) => (
+            <option key={template.id} value={template.id}>
+              {template.name}
+            </option>
+          ))}
+        </SelectField>
+      )}
+      <FormField defaultValue={kit?.title} label="List name" name="title" placeholder="Plane packing list, boarding checklist, picnic day" required />
+      <FormField defaultValue={kit?.destination} label="Destination or context" name="destination" placeholder="Mexico City, groomer visit, beach day" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FormField defaultValue={kit?.startDate} label="Start date" name="startDate" type="date" />
+        <FormField defaultValue={kit?.endDate} label="End date" name="endDate" type="date" />
+      </div>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-semibold text-ink">Pets</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {pets.map((pet) => (
+            <label className="flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink" key={pet.id}>
+              <input defaultChecked={kit ? kit.petIds.includes(pet.id) : pet.id === selectedPetId} name="petIds" type="checkbox" value={pet.id} />
+              {pet.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <TextAreaField defaultValue={kit?.notes} label="Notes" name="notes" placeholder="Instructions, rules, packing context, or handoff notes." />
+      <SubmitButton label={isEditing ? "Save list" : "Create list"} />
+    </form>
+  );
+}
+
 function PetSharingAccess({
   activeLinkCount,
   memberCount,
@@ -4829,7 +6842,7 @@ function DocumentList({
 
   return (
     <div className="min-w-0 space-y-2">
-      {documents.map((document) => (
+      {sortDocumentsByCreatedAt(documents).map((document) => (
         <DocumentRow
           compact={compact}
           document={document}
@@ -4837,6 +6850,43 @@ function DocumentList({
           onPreview={onPreview ? () => onPreview(document) : undefined}
         />
       ))}
+    </div>
+  );
+}
+
+function VaccineProofFiles({
+  latestDocument,
+  olderDocuments,
+  onPreview,
+}: {
+  latestDocument: RecordDocument;
+  olderDocuments: RecordDocument[];
+  onPreview: (document: RecordDocument) => void;
+}) {
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Latest proof</p>
+        <DocumentRow compact document={latestDocument} onPreview={() => onPreview(latestDocument)} />
+      </div>
+      {olderDocuments.length > 0 ? (
+        <details className="overflow-hidden rounded-lg border border-line bg-background">
+          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs font-semibold text-muted">
+            <span>Older files</span>
+            <span>{olderDocuments.length}</span>
+          </summary>
+          <div className="space-y-2 border-t border-line p-3">
+            {sortDocumentsByCreatedAt(olderDocuments).map((document) => (
+              <DocumentRow
+                compact
+                document={document}
+                key={document.id}
+                onPreview={() => onPreview(document)}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -5523,6 +7573,57 @@ function logTone(type: LogEntry["recordType"]) {
   return "bg-[#ffe7a7] text-ink";
 }
 
+function sortDocumentsByCreatedAt(documents: RecordDocument[]) {
+  return [...documents].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function latestDocument(documents: RecordDocument[]) {
+  return sortDocumentsByCreatedAt(documents)[0] ?? null;
+}
+
+function findLatestDocumentForKitType(
+  documents: RecordDocument[],
+  petId: string,
+  documentType: KitDocumentLink["documentType"],
+) {
+  const petDocuments = documents.filter((document) => document.petId === petId);
+  const candidates = petDocuments.filter((document) => {
+    const title = document.title.toLowerCase();
+
+    if (documentType === "rabies-proof") {
+      return document.recordType === "vaccine_record" && title.includes("rabies");
+    }
+
+    if (documentType === "vaccination-records") {
+      return document.recordType === "vaccine_record";
+    }
+
+    if (documentType === "registration") {
+      return title.includes("registration") || title.includes("license");
+    }
+
+    if (documentType === "microchip-info") {
+      return title.includes("microchip") || title.includes("chip");
+    }
+
+    if (documentType === "health-certificate") {
+      return title.includes("health certificate") || title.includes("certificate");
+    }
+
+    if (documentType === "airline-forms") {
+      return title.includes("airline") || title.includes("flight") || title.includes("usda");
+    }
+
+    if (documentType === "insurance") {
+      return title.includes("insurance");
+    }
+
+    return false;
+  });
+
+  return latestDocument(candidates);
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -5553,6 +7654,194 @@ function completionTimingLabel(log: LogEntry) {
   if (log.completedTiming === "on-time") return "On time";
   if (log.completedTiming === "late") return days === 1 ? "Completed 1 day late" : `Completed ${days} days late`;
   return days === 1 ? "Completed 1 day early" : `Completed ${days} days early`;
+}
+
+function getKitPrepItems(trips: PetKit[]): KitPrepItem[] {
+  return trips.flatMap((trip) => {
+    if (!trip.startDate) return [];
+    const endDate = trip.endDate || trip.startDate;
+    const prepLabel = kitPrepLabel(trip);
+
+    return [
+      {
+        endDate,
+        id: `${trip.id}-review`,
+        date: addDays(trip.startDate, -90),
+        destination: trip.destination || "",
+        petIds: trip.petIds,
+        prepLabel,
+        title: "Review travel requirements",
+        tripId: trip.id,
+        tripTitle: trip.title,
+      },
+      {
+        endDate,
+        id: `${trip.id}-documents`,
+        date: addDays(trip.startDate, -30),
+        destination: trip.destination || "",
+        petIds: trip.petIds,
+        prepLabel,
+        title: "Check travel documents",
+        tripId: trip.id,
+        tripTitle: trip.title,
+      },
+      {
+        endDate,
+        id: `${trip.id}-final-pack`,
+        date: addDays(trip.startDate, -7),
+        destination: trip.destination || "",
+        petIds: trip.petIds,
+        prepLabel,
+        title: "Final pack check",
+        tripId: trip.id,
+        tripTitle: trip.title,
+      },
+    ].filter((item) => item.date <= endDate);
+  });
+}
+
+function kitPrepLabel(kit: PetKit): KitPrepItem["prepLabel"] {
+  return kit.sourceTemplateId.includes("flight") || kit.sourceTemplateId.includes("road") ? "Trip prep" : "List prep";
+}
+
+function kitContextLabel(kit: PetKit) {
+  const dateLabel = kit.startDate
+    ? kit.endDate && kit.endDate !== kit.startDate
+      ? `${formatDateForDisplay(kit.startDate)} to ${formatDateForDisplay(kit.endDate)}`
+      : formatDateForDisplay(kit.startDate)
+    : "No date set";
+  return [kit.destination, dateLabel].filter(Boolean).join(" - ");
+}
+
+function kitProgressParts(trip: PetKit) {
+  const items = kitUnifiedItems(trip);
+  const completed = items.filter((item) => item.completed).length;
+  const documentIssues = items.filter(
+    (item) =>
+      item.itemType === "document" &&
+      (!item.completed || item.status === "expires-before-trip" || item.status === "renewal-recommended"),
+  ).length;
+
+  return {
+    done: items.length === 0 ? "0/0" : `${completed}/${items.length}`,
+    documentIssues: documentIssues > 0 ? `${documentIssues} ${documentIssues === 1 ? "doc" : "docs"}` : "",
+  };
+}
+
+function kitDocumentResolved(link: KitDocumentLink) {
+  return Boolean(link.completed || link.documentId || link.status === "attached" || link.status === "current");
+}
+
+function kitUnifiedItems(kit: PetKit): KitUnifiedItem[] {
+  const checklistItems = kit.checklistItems.map((item) => ({
+    ...item,
+    itemType: item.itemType ?? (item.resourceUrl ? ("link" as const) : ("task" as const)),
+    source: "checklist" as const,
+  }));
+  const documentItems = kit.documentLinks.map((link) => ({
+    completed: kitDocumentResolved(link),
+    documentId: link.documentId,
+    documentType: link.documentType,
+    expiresOn: link.expiresOn,
+    id: link.id,
+    itemType: "document" as const,
+    label: link.label,
+    petId: link.petId,
+    recordId: link.recordId,
+    recordType: link.recordType,
+    source: "document-link" as const,
+    status: link.status,
+  }));
+
+  return [...checklistItems, ...documentItems];
+}
+
+function kitItemMeta(item: KitUnifiedItem) {
+  if (item.itemType === "document") {
+    if (item.documentId) return item.expiresOn ? `Document attached - expires ${formatDateForDisplay(item.expiresOn)}` : "Document attached";
+    if (item.status) return kitDocumentStatusLabel(item.status);
+    return item.documentType ? kitDocumentTypeLabel(item.documentType) : "Document needed";
+  }
+
+  if (item.itemType === "link") return item.resourceLabel || (item.resourceUrl ? compactUrlLabel(item.resourceUrl) : "Saved link");
+  return "";
+}
+
+function kitDocumentStatusLabel(status: KitDocumentLink["status"]) {
+  const labels: Record<KitDocumentLink["status"], string> = {
+    attached: "Attached",
+    current: "Current",
+    "expires-before-trip": "Expires before trip",
+    missing: "Missing",
+    "renewal-recommended": "Renewal recommended",
+  };
+  return labels[status];
+}
+
+function kitDocumentTypeLabel(type: KitDocumentLink["documentType"]) {
+  const labels: Record<KitDocumentLink["documentType"], string> = {
+    "airline-forms": "Airline forms",
+    custom: "Custom document",
+    "health-certificate": "Health certificate",
+    insurance: "Insurance",
+    "microchip-info": "Microchip info",
+    "rabies-proof": "Rabies proof",
+    registration: "Registration",
+    "vaccination-records": "Vaccination records",
+  };
+  return labels[type];
+}
+
+function defaultKitRenewalLeadDays(type: KitDocumentLink["documentType"]) {
+  if (type === "health-certificate" || type === "airline-forms") return 14;
+  if (type === "rabies-proof" || type === "vaccination-records") return 30;
+  return 21;
+}
+
+function kitResolvedStatus(link: KitDocumentLink, trip: PetKit): KitDocumentStatus {
+  if (link.expiresOn && trip.startDate && link.expiresOn < trip.startDate) return "expires-before-trip";
+  if (link.expiresOn && link.renewalLeadDays && daysBetween(todayValue, link.expiresOn) <= link.renewalLeadDays) {
+    return "renewal-recommended";
+  }
+  return link.expiresOn ? "current" : "attached";
+}
+
+function completeRelatedKitChecklistItem(items: KitChecklistItem[], link?: KitDocumentLink) {
+  if (!link) return items;
+
+  const terms = relatedDocumentTerms(link).map((term) => term.toLowerCase());
+  let completedOne = false;
+
+  return items.map((item) => {
+    if (item.completed || completedOne) return item;
+    const label = item.label.toLowerCase();
+    const matches = terms.some((term) => term && label.includes(term));
+    if (!matches) return item;
+
+    completedOne = true;
+    return { ...item, completed: true };
+  });
+}
+
+function relatedDocumentTerms(link: KitDocumentLink) {
+  const typeLabel = kitDocumentTypeLabel(link.documentType);
+
+  if (link.documentType === "airline-forms") return [link.label, typeLabel, "airline", "form", "paperwork", "usda"];
+  if (link.documentType === "health-certificate") return [link.label, typeLabel, "health certificate", "certificate"];
+  if (link.documentType === "rabies-proof") return [link.label, typeLabel, "rabies"];
+  if (link.documentType === "vaccination-records") return [link.label, typeLabel, "vaccine", "vaccination", "immunization"];
+  if (link.documentType === "registration") return [link.label, typeLabel, "registration", "license"];
+  if (link.documentType === "microchip-info") return [link.label, typeLabel, "microchip", "chip"];
+  if (link.documentType === "insurance") return [link.label, typeLabel, "insurance"];
+  return [link.label, typeLabel];
+}
+
+function compactUrlLabel(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "Open link";
+  }
 }
 
 function daysBetween(startValue: string, endValue: string) {

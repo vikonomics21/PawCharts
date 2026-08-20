@@ -4,7 +4,9 @@ This file keeps the current build focused. It separates what belongs in the pres
 
 ## In The Current MVP
 
-- Mock-data product workflows before real auth and persistence.
+- Local-only mock-data product workflows for founder/product design before each screen has real persistence.
+- Production data-mode guard so signed-out users see sign-in and signed-in users receive Supabase-backed initial pet data instead of demo pets, records, documents, share links, or fake access members.
+- Persistent private-beta onboarding that creates owner profile, household, owner membership, and first pet.
 - Dogs and cats.
 - Multiple pets per household.
 - Mock owner profile for greeting and auth-ready personal info editing.
@@ -26,14 +28,19 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Completion logs that preserve original due date, actual completion date, and early/on-time/late status.
 - Vaccines, medications, care logs, measurements, vet visits, notes, and document attachment concepts.
 - Private-by-default document behavior in the product model.
+- Mock document versioning for record attachments, starting with vaccine proof latest/older grouping.
 - Household sharing UX model with roles.
 - Pet-level sharing/access section inside Pets.
 - Mock pet-specific member invites, role changes, access removal, and vaccination share links.
 - Public share-link and QR concepts for vaccination proof.
+- Home-level mock Lists & kits workflow with reusable templates, blank custom lists, optional dated prep, multi-pet packing lists, compact resource links, unified task/document/link checklist items, document uploads from list rows, reset-list behavior, list metadata editing, list deletion, and checklist item deletion.
+- Quick first-time onboarding model with owner basics, pet basics, optional mocked record upload, and a Complete later checklist.
+- Single-pet UI simplification that hides unnecessary pet switchers.
 - Mobile-first design that also works well on desktop.
 - Supabase project connection and initial RLS-backed schema.
-- Supabase Pets data adapter for future authenticated read/write.
+- Supabase Pets data adapter and server actions for authenticated read/write as the first production data boundary.
 - Google OAuth sign-in, callback handling, session refresh middleware, and sign-out.
+- Read-only `/support` page gated by server-only admin email allowlist.
 
 ## Later
 
@@ -60,5 +67,5 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Final brand name.
 - Final public share page visual design.
 - Upload file size and file type limits.
-- Exact onboarding flow after auth is introduced.
+- Exact onboarding persistence and profile sync after auth is introduced.
 - Subscription tier enforcement details.
