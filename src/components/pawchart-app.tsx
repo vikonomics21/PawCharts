@@ -7915,27 +7915,25 @@ function HealthShortcutStrip({ onViewDocuments }: { onViewDocuments: () => void 
   const shortcuts = [
     { icon: ShieldCheck, label: "Vaccines", onClick: () => scrollToSection("health-vaccines") },
     { icon: Pill, label: "Meds", onClick: () => scrollToSection("health-meds") },
-    { icon: HeartPulse, label: "Vet care", onClick: () => scrollToSection("health-vet-care") },
+    { icon: HeartPulse, label: "Vet", onClick: () => scrollToSection("health-vet-care") },
     { icon: Eye, label: "Observations", onClick: () => scrollToSection("health-observations") },
-    { icon: FileText, label: "Documents", onClick: onViewDocuments },
+    { icon: FileText, label: "Docs", onClick: onViewDocuments },
     { icon: CalendarCheck, label: "History", onClick: () => scrollToSection("health-history") },
   ];
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
       {shortcuts.map((shortcut) => {
         const Icon = shortcut.icon;
 
         return (
           <button
-            className="flex min-h-11 min-w-0 items-center gap-2 rounded-full border border-line bg-white px-3 py-2 text-sm font-semibold text-ink shadow-sm transition hover:border-primary/30 hover:bg-background active:scale-[0.99]"
+            className="flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-1.5 py-2 text-[11px] font-semibold text-ink shadow-sm transition hover:border-primary/30 hover:bg-background active:scale-[0.99] min-[390px]:text-xs sm:px-2 sm:text-sm"
             key={shortcut.label}
             onClick={shortcut.onClick}
             type="button"
           >
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-              <Icon aria-hidden className="h-4 w-4" />
-            </span>
+            <Icon aria-hidden className="h-4 w-4 shrink-0 text-primary" />
             <span className="truncate">{shortcut.label}</span>
           </button>
         );
