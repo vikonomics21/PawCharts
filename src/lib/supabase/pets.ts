@@ -247,9 +247,12 @@ export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | nu
     breed: row.breed ?? "Unknown breed",
     sex: row.sex === "female" ? "female" : "male",
     photo: signedPhotoUrl ?? defaultPhotoForSpecies(row.species),
+    dateOfBirth: row.date_of_birth ?? undefined,
     ageLabel: formatAgeLabel(row),
     ageEstimated: row.age_is_estimated,
     weight: formatWeight(row.weight_value, row.weight_unit),
+    weightValue: row.weight_value === null ? undefined : String(Number(row.weight_value)),
+    weightUnit: row.weight_unit === "kg" ? "kg" : "lb",
     status: "Ready for care",
     behaviorNotes: row.behavior_notes ?? "",
     careNotes: row.care_notes ?? "",
@@ -294,6 +297,10 @@ export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | nu
 }
 
 function formatAgeLabel(row: PetRow) {
+  if (row.date_of_birth) {
+    return formatAgeFromBirthDate(row.date_of_birth);
+  }
+
   if (row.approximate_age_years || row.approximate_age_months) {
     const parts = [
       row.approximate_age_years ? `${row.approximate_age_years} ${row.approximate_age_years === 1 ? "year" : "years"}` : "",
@@ -302,15 +309,37 @@ function formatAgeLabel(row: PetRow) {
     return `${row.age_is_estimated ? "About " : ""}${parts.join(", ")}`;
   }
 
-  if (row.date_of_birth) {
-    return row.age_is_estimated ? "Approximate age set" : "DOB saved";
-  }
-
   return row.age_is_estimated ? "Approximate age" : "Age not set";
 }
 
 function formatWeight(value: number | null, unit: string) {
-  return value === null ? "Not logged" : `${Number(value).toLocaleString("en-US")} ${unit || "lb"}`;
+  if (value === null) return "Not logged";
+
+  const normalizedUnit = unit === "kg" ? "kg" : "lb";
+  const unitLabel = normalizedUnit === "kg" ? "kg" : Number(value) === 1 ? "lb" : "lbs";
+
+  return `${Number(value).toLocaleString("en-US")} ${unitLabel}`;
+}
+
+function formatAgeFromBirthDate(value: string) {
+  const birthDate = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(birthDate.getTime())) return "Age not set";
+
+  const now = new Date();
+  let years = now.getUTCFullYear() - birthDate.getUTCFullYear();
+  let months = now.getUTCMonth() - birthDate.getUTCMonth();
+  if (now.getUTCDate() < birthDate.getUTCDate()) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const parts = [
+    years > 0 ? `${years} ${years === 1 ? "year" : "years"}` : "",
+    months > 0 ? `${months} ${months === 1 ? "month" : "months"}` : "",
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(", ") : "Less than 1 month";
 }
 
 function formatCreatedLabel(value: string | null) {

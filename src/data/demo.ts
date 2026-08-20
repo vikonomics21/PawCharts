@@ -18,9 +18,12 @@ export type Pet = {
   breed: string;
   sex: "male" | "female";
   photo: string;
+  dateOfBirth?: string;
   ageLabel: string;
   ageEstimated: boolean;
   weight: string;
+  weightValue?: string;
+  weightUnit?: "lb" | "kg";
   status: string;
   behaviorNotes: string;
   careNotes: string;
@@ -140,6 +143,19 @@ export type RecordDocument = {
   addedLabel: string;
   privateByDefault: boolean;
   versionLabel: string;
+};
+
+export type ShareLink = {
+  id: string;
+  petId: string;
+  label: string;
+  type: "Vaccination record" | "Document packet";
+  token: string;
+  url: string;
+  includeOwnerContact: boolean;
+  status: "Active" | "Revoked";
+  createdLabel: string;
+  documentIds?: string[];
 };
 
 export type KitChecklistItem = {
@@ -284,9 +300,12 @@ export const demoPets: Pet[] = [
     sex: "male",
     photo:
       "https://images.unsplash.com/photo-1552053831-71594a27632d?auto=format&fit=crop&w=640&q=80",
+    dateOfBirth: "2022-08-14",
     ageLabel: "About 4 years",
     ageEstimated: true,
-    weight: "22 lb",
+    weight: "22 lbs",
+    weightValue: "22",
+    weightUnit: "lb",
     status: "2 items due today",
     behaviorNotes:
       "Affectionate and food-motivated. Gets excited near scooters and needs extra distance on busy sidewalks. Leash walks are easiest with a touch cue and extra space near scooters.",
@@ -338,9 +357,12 @@ export const demoPets: Pet[] = [
     sex: "female",
     photo:
       "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=640&q=80",
+    dateOfBirth: "2023-06-18",
     ageLabel: "3 years, 2 months",
     ageEstimated: false,
-    weight: "10.5 lb",
+    weight: "10.5 lbs",
+    weightValue: "10.5",
+    weightUnit: "lb",
     status: "All care current",
     behaviorNotes:
       "Slow to warm up to guests. Likes quiet rooms and will come out for treats once the room settles.",

@@ -34,7 +34,8 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { FormEvent, useMemo, useState } from "react";
+import QRCode from "qrcode";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   archiveProductionPet,
@@ -44,6 +45,7 @@ import {
   createProductionMeasurementSnapshot,
   createProductionDocumentSignedUrl,
   deleteProductionPet,
+  createProductionSharePacket,
   updateProductionOwnerProfile,
   updateProductionPet,
   updateProductionPetCareTeam,
@@ -51,6 +53,7 @@ import {
   updateProductionVetProvider,
   deleteProductionDocument,
   renameProductionDocument,
+  revokeProductionShareLink,
   restoreProductionPet,
   uploadProductionDocument,
 } from "@/app/pawchart-production-actions";
@@ -75,6 +78,7 @@ import {
   type Pet,
   type PetSpecies,
   type RecordDocument,
+  type ShareLink,
   type Task,
   type KitChecklistItem,
   type KitDocumentLink,
@@ -107,8 +111,8 @@ type ModalState =
   | { title: string; type: "quick-care"; petId: string }
   | { title: string; type: "add-vet-note"; petId: string }
   | { title: string; type: "change-vet"; pet: Pet }
-  | { title: string; type: "add-vet" }
-  | { title: string; type: "edit-vet"; provider: VetProvider }
+  | { title: string; type: "add-vet"; returnPetId?: string }
+  | { title: string; type: "edit-vet"; provider: VetProvider; returnPetId?: string }
   | { title: string; type: "owner-profile" }
   | { title: string; type: "invite-member"; pet: Pet }
   | { title: string; type: "log-vet-visit"; petId: string }
@@ -122,6 +126,7 @@ type ModalState =
   | { title: string; type: "confirm-delete-vet-visit"; visit: VetVisit }
   | { title: string; type: "confirm-remove-access"; member: PetAccessMember }
   | { title: string; type: "confirm-revoke-share-link"; link: ShareLink }
+  | { title: string; type: "create-share-packet"; pet: Pet }
   | { title: string; type: "schedule-care"; petId: string; initialDueDate?: string }
   | { title: string; type: "manage-schedule"; petId: string }
   | { title: string; type: "edit-schedule"; task: Task }
@@ -227,7 +232,10 @@ type OnboardingInput = {
   species: PetSpecies;
   breed: string;
   ageLabel: string;
+  dateOfBirth: string;
   weight: string;
+  weightUnit: "lb" | "kg";
+  weightValue: string;
   photoFile: File | null;
 };
 
@@ -240,10 +248,13 @@ type PetFormSubmitInput = {
   ageLabel: string;
   behaviorNotes: string;
   breed: string;
+  dateOfBirth: string;
   name: string;
   photoFile: File | null;
   species: PetSpecies;
   weight: string;
+  weightUnit: "lb" | "kg";
+  weightValue: string;
 };
 
 type VetProviderFormInput = Omit<VetProvider, "householdId" | "id">;
@@ -256,18 +267,6 @@ type PetAccessMember = {
   role: "Admin" | "Editor" | "Viewer";
   status: "Active" | "Invited";
   removable?: boolean;
-};
-
-type ShareLink = {
-  id: string;
-  petId: string;
-  label: string;
-  type: "Vaccination record";
-  token: string;
-  url: string;
-  includeOwnerContact: boolean;
-  status: "Active" | "Revoked";
-  createdLabel: string;
 };
 
 export type PawChartDataMode = "local-demo" | "production";
@@ -298,6 +297,35 @@ const tabs: { id: Tab; label: string; icon: typeof Home }[] = [
 ];
 
 const todayValue = new Date().toISOString().slice(0, 10);
+
+function calculateAgeLabelFromBirthDate(value: string) {
+  if (!value) return "";
+  const birthDate = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(birthDate.getTime())) return "";
+
+  const now = new Date();
+  let years = now.getUTCFullYear() - birthDate.getUTCFullYear();
+  let months = now.getUTCMonth() - birthDate.getUTCMonth();
+  if (now.getUTCDate() < birthDate.getUTCDate()) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const parts = [
+    years > 0 ? `${years} ${years === 1 ? "year" : "years"}` : "",
+    months > 0 ? `${months} ${months === 1 ? "month" : "months"}` : "",
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(", ") : "Less than 1 month";
+}
+
+function formatWeightDisplay(value: string, unit: "lb" | "kg", fallback = "Not logged") {
+  const parsed = Number(value || "");
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  const unitLabel = unit === "kg" ? "kg" : parsed === 1 ? "lb" : "lbs";
+  return `${parsed.toLocaleString("en-US")} ${unitLabel}`;
+}
 
 const initialPetAccessMembers: PetAccessMember[] = [
   {
@@ -634,9 +662,12 @@ export function PawChartApp({
       breed: input.breed || "Unknown breed",
       sex: "male",
       photo: localPhotoUrl(input.photoFile, input.species),
-      ageLabel: input.ageLabel || "Approximate age",
-      ageEstimated: true,
-      weight: input.weight || "Not logged",
+      dateOfBirth: input.dateOfBirth || undefined,
+      ageLabel: input.dateOfBirth ? calculateAgeLabelFromBirthDate(input.dateOfBirth) : input.ageLabel || "Approximate age",
+      ageEstimated: !input.dateOfBirth,
+      weight: formatWeightDisplay(input.weightValue, input.weightUnit, input.weight || "Not logged"),
+      weightValue: input.weightValue || undefined,
+      weightUnit: input.weightUnit,
       status: "Ready for care",
       behaviorNotes: input.behaviorNotes,
       careNotes: "",
@@ -684,11 +715,14 @@ export function PawChartApp({
           ageLabel: input.ageLabel,
           breed: input.breed,
           city: input.city,
+          dateOfBirth: input.dateOfBirth,
           email: input.email,
           firstName: input.firstName,
           petName: input.petName,
           species: input.species,
           weight: input.weight,
+          weightUnit: input.weightUnit,
+          weightValue: input.weightValue,
         });
         let savedPet = result.pet;
 
@@ -723,9 +757,12 @@ export function PawChartApp({
       breed: input.breed || "Unknown breed",
       sex: "male",
       photo: localPhotoUrl(input.photoFile, input.species),
-      ageLabel: input.ageLabel || "Approximate age",
-      ageEstimated: true,
-      weight: input.weight || "Not logged",
+      dateOfBirth: input.dateOfBirth || undefined,
+      ageLabel: input.dateOfBirth ? calculateAgeLabelFromBirthDate(input.dateOfBirth) : input.ageLabel || "Approximate age",
+      ageEstimated: !input.dateOfBirth,
+      weight: formatWeightDisplay(input.weightValue, input.weightUnit, input.weight || "Not logged"),
+      weightValue: input.weightValue || undefined,
+      weightUnit: input.weightUnit,
       status: "Ready for care",
       behaviorNotes: "",
       careNotes: "",
@@ -936,11 +973,17 @@ export function PawChartApp({
   }
 
   async function changePetVet(input: { petId: string; primaryVetId: string; secondaryVetId: string; secondaryVetRole: string }) {
+    const normalizedInput = {
+      ...input,
+      secondaryVetId: input.primaryVetId && input.primaryVetId === input.secondaryVetId ? "" : input.secondaryVetId,
+      secondaryVetRole: input.primaryVetId && input.primaryVetId === input.secondaryVetId ? "" : input.secondaryVetRole,
+    };
+
     if (!isLocalDemo) {
       try {
-        const pet = await updateProductionPetCareTeam(input);
+        const pet = await updateProductionPetCareTeam(normalizedInput);
         setPets((current) => current.map((currentPet) => (currentPet.id === pet.id ? pet : currentPet)));
-        setModal(null);
+        setModal({ title: "Manage care team", type: "change-vet", pet });
       } catch (error) {
         handleProductionError(error);
       }
@@ -952,14 +995,26 @@ export function PawChartApp({
         pet.id === input.petId
           ? {
               ...pet,
-              primaryVetId: input.primaryVetId || undefined,
-              secondaryVetId: input.secondaryVetId || undefined,
-              secondaryVetRole: input.secondaryVetRole || undefined,
+              primaryVetId: normalizedInput.primaryVetId || undefined,
+              secondaryVetId: normalizedInput.secondaryVetId || undefined,
+              secondaryVetRole: normalizedInput.secondaryVetRole || undefined,
             }
           : pet,
       ),
     );
-    setModal(null);
+    const updatedPet = pets.find((pet) => pet.id === input.petId);
+    setModal({
+      title: "Manage care team",
+      type: "change-vet",
+      pet: updatedPet
+        ? {
+            ...updatedPet,
+            primaryVetId: normalizedInput.primaryVetId || undefined,
+            secondaryVetId: normalizedInput.secondaryVetId || undefined,
+            secondaryVetRole: normalizedInput.secondaryVetRole || undefined,
+          }
+        : selectedPet,
+    });
   }
 
   async function updateOwnerProfile(input: OwnerProfile) {
@@ -978,12 +1033,24 @@ export function PawChartApp({
     setModal(null);
   }
 
-  async function addVetProvider(input: VetProviderFormInput) {
+  async function addVetProvider(input: VetProviderFormInput, returnPetId?: string) {
     if (!isLocalDemo) {
       try {
         const provider = await createProductionVetProvider(input);
         setVetProviders((current) => [...current, provider]);
-        setModal(null);
+        const returnPet = returnPetId ? pets.find((pet) => pet.id === returnPetId) : undefined;
+        if (returnPet && !returnPet.primaryVetId) {
+          const updatedPet = await updateProductionPetCareTeam({
+            petId: returnPet.id,
+            primaryVetId: provider.id,
+            secondaryVetId: returnPet.secondaryVetId ?? "",
+            secondaryVetRole: returnPet.secondaryVetRole ?? "",
+          });
+          setPets((current) => current.map((pet) => (pet.id === updatedPet.id ? updatedPet : pet)));
+          setModal({ title: "Manage care team", type: "change-vet", pet: updatedPet });
+          return;
+        }
+        setModal(returnPet ? { title: "Manage care team", type: "change-vet", pet: returnPet } : null);
       } catch (error) {
         handleProductionError(error);
       }
@@ -1001,17 +1068,25 @@ export function PawChartApp({
     };
 
     setVetProviders((current) => [...current, provider]);
-    setModal(null);
+    const returnPet = returnPetId ? pets.find((pet) => pet.id === returnPetId) : undefined;
+    if (returnPet && !returnPet.primaryVetId) {
+      const updatedPet = { ...returnPet, primaryVetId: provider.id };
+      setPets((current) => current.map((pet) => (pet.id === updatedPet.id ? updatedPet : pet)));
+      setModal({ title: "Manage care team", type: "change-vet", pet: updatedPet });
+      return;
+    }
+    setModal(returnPet ? { title: "Manage care team", type: "change-vet", pet: returnPet } : null);
   }
 
-  async function updateVetProvider(input: VetProvider) {
+  async function updateVetProvider(input: VetProvider, returnPetId?: string) {
     if (!isLocalDemo) {
       try {
         const provider = await updateProductionVetProvider(input);
         setVetProviders((current) =>
           current.map((currentProvider) => (currentProvider.id === provider.id ? provider : currentProvider)),
         );
-        setModal(null);
+        const returnPet = returnPetId ? pets.find((pet) => pet.id === returnPetId) : undefined;
+        setModal(returnPet ? { title: "Manage care team", type: "change-vet", pet: returnPet } : null);
       } catch (error) {
         handleProductionError(error);
       }
@@ -1021,7 +1096,8 @@ export function PawChartApp({
     setVetProviders((current) =>
       current.map((provider) => (provider.id === input.id ? input : provider)),
     );
-    setModal(null);
+    const returnPet = returnPetId ? pets.find((pet) => pet.id === returnPetId) : undefined;
+    setModal(returnPet ? { title: "Manage care team", type: "change-vet", pet: returnPet } : null);
   }
 
   function addObservation(input: {
@@ -1470,22 +1546,38 @@ export function PawChartApp({
     setPetAccessMembers((current) => current.filter((member) => member.id !== memberId));
   }
 
-  function createVaccinationShareLink(pet: Pet) {
-    const token = `${pet.id}-vax-${Date.now().toString(36)}`;
+  async function createSharePacket(input: { documentIds: string[]; includeOwnerContact: boolean; label: string; petId: string }) {
+    if (!isLocalDemo) {
+      try {
+        const link = await createProductionSharePacket(input);
+        setShareLinks((current) => [link, ...current.filter((item) => item.id !== link.id)]);
+        setCopiedShareLinkId(null);
+        const pet = pets.find((item) => item.id === input.petId) ?? selectedPet;
+        setModal({ title: "Sharing and access", type: "sharing-access", pet });
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    const token = `${input.petId}-packet-${Date.now().toString(36)}`;
     const link: ShareLink = {
       id: `share-${token}`,
-      petId: pet.id,
-      label: `${pet.name} vaccination record`,
-      type: "Vaccination record",
+      petId: input.petId,
+      label: input.label.trim() || "Document packet",
+      type: "Document packet",
       token,
-      url: `https://pawchart.app/share/${token}`,
-      includeOwnerContact: true,
+      url: `${window.location.origin}/share/${token}`,
+      includeOwnerContact: input.includeOwnerContact,
       status: "Active",
       createdLabel: "Just now",
+      documentIds: input.documentIds,
     };
 
     setShareLinks((current) => [link, ...current]);
     setCopiedShareLinkId(null);
+    const pet = pets.find((item) => item.id === input.petId) ?? selectedPet;
+    setModal({ title: "Sharing and access", type: "sharing-access", pet });
   }
 
   function copyShareLink(linkId: string) {
@@ -1496,7 +1588,16 @@ export function PawChartApp({
     setCopiedShareLinkId(linkId);
   }
 
-  function revokeShareLink(linkId: string) {
+  async function revokeShareLink(linkId: string) {
+    if (!isLocalDemo) {
+      try {
+        await revokeProductionShareLink(linkId);
+      } catch (error) {
+        handleProductionError(error);
+        return;
+      }
+    }
+
     setShareLinks((current) =>
       current.map((link) => (link.id === linkId ? { ...link, status: "Revoked" } : link)),
     );
@@ -2357,6 +2458,7 @@ export function PawChartApp({
             isAuthenticated={isAuthenticated}
             logs={logs}
             onLogForDate={handleTaskBackdate}
+            onCloseNotifications={() => setShowNotifications(false)}
             onOpenOwnerProfile={() => setModal({ title: "Your info", type: "owner-profile" })}
             onPrimary={handleTaskPrimary}
             onToggleNotifications={() => setShowNotifications((current) => !current)}
@@ -2603,19 +2705,29 @@ export function PawChartApp({
         )}
         {modal?.type === "change-vet" && (
           <ManageCareTeamForm
-            onAddProvider={() => setModal({ title: "Add vet or clinic", type: "add-vet" })}
-            onEditProvider={(provider) => setModal({ title: "Edit vet or clinic", type: "edit-vet", provider })}
+            onAddProvider={() => setModal({ title: "Add vet or clinic", type: "add-vet", returnPetId: modal.pet.id })}
+            onEditProvider={(provider) => setModal({ title: "Edit vet or clinic", type: "edit-vet", provider, returnPetId: modal.pet.id })}
             onSubmit={(input) => changePetVet({ petId: modal.pet.id, ...input })}
             pet={modal.pet}
             providers={vetProviders}
           />
         )}
         {modal?.type === "add-vet" && (
-          <VetProviderForm onSubmit={addVetProvider} />
+          <VetProviderForm
+            onBack={modal.returnPetId ? () => {
+              const pet = pets.find((item) => item.id === modal.returnPetId);
+              if (pet) setModal({ title: "Manage care team", type: "change-vet", pet });
+            } : undefined}
+            onSubmit={(input) => addVetProvider(input, modal.returnPetId)}
+          />
         )}
         {modal?.type === "edit-vet" && (
           <VetProviderForm
-            onSubmit={(input) => updateVetProvider({ ...modal.provider, ...input })}
+            onBack={modal.returnPetId ? () => {
+              const pet = pets.find((item) => item.id === modal.returnPetId);
+              if (pet) setModal({ title: "Manage care team", type: "change-vet", pet });
+            } : undefined}
+            onSubmit={(input) => void updateVetProvider({ ...modal.provider, ...input }, modal.returnPetId)}
             provider={modal.provider}
           />
         )}
@@ -2954,9 +3066,10 @@ export function PawChartApp({
         {modal?.type === "sharing-access" && (
           <SharingAccessDetails
             copiedShareLinkId={copiedShareLinkId}
+            documents={documents.filter((document) => document.petId === modal.pet.id)}
             members={petAccessMembers.filter((member) => member.petId === modal.pet.id)}
             onCopyShareLink={copyShareLink}
-            onCreateShareLink={() => createVaccinationShareLink(modal.pet)}
+            onCreateSharePacket={() => setModal({ title: "Create packet", type: "create-share-packet", pet: modal.pet })}
             onInviteMember={() => setModal({ title: "Invite member", type: "invite-member", pet: modal.pet })}
             onRemoveMember={(member) => setModal({ title: "Remove access?", type: "confirm-remove-access", member })}
             onRevokeShareLink={(link) => setModal({ title: "Revoke link?", type: "confirm-revoke-share-link", link })}
@@ -2968,6 +3081,13 @@ export function PawChartApp({
         )}
         {modal?.type === "share-link-qr" && (
           <ShareLinkQrDetails link={modal.link} />
+        )}
+        {modal?.type === "create-share-packet" && (
+          <SharePacketForm
+            documents={documents.filter((document) => document.petId === modal.pet.id)}
+            onSubmit={(input) => void createSharePacket({ ...input, petId: modal.pet.id })}
+            pet={modal.pet}
+          />
         )}
         {modal?.type === "training-cues" && (
           <TrainingCueDetails cues={modal.pet.trainingCues ?? []} petName={modal.pet.name} />
@@ -3019,16 +3139,21 @@ function OnboardingView({
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             const photoInput = event.currentTarget.elements.namedItem("petPhoto") as HTMLInputElement | null;
+            const weightUnit = String(form.get("weightUnit") || "lb") === "kg" ? "kg" : "lb";
+            const weightValue = String(form.get("weightValue") || "");
             onSubmit({
               ageLabel: String(form.get("ageLabel") || ""),
               breed: String(form.get("breed") || ""),
               city: String(form.get("city") || ""),
+              dateOfBirth: String(form.get("dateOfBirth") || ""),
               email: String(form.get("email") || ""),
               firstName: String(form.get("firstName") || ""),
               petName: String(form.get("petName") || ""),
               photoFile: photoInput?.files?.[0] ?? null,
               species: String(form.get("species") || "dog") as PetSpecies,
-              weight: String(form.get("weight") || ""),
+              weight: formatWeightDisplay(weightValue, weightUnit),
+              weightUnit,
+              weightValue,
             });
           }}>
             <section className="grid gap-3 sm:grid-cols-3">
@@ -3043,9 +3168,9 @@ function OnboardingView({
                 <option value="dog">Dog</option>
                 <option value="cat">Cat</option>
               </SelectField>
-              <FormField label="Approximate age" name="ageLabel" placeholder="2 years, senior, unknown" />
+              <FormField label="Birth date" name="dateOfBirth" type="date" />
               <FormField label="Breed" name="breed" />
-              <FormField label="Weight" name="weight" placeholder="28 lb" />
+              <WeightInputFields label="Weight" />
             </section>
 
             <PhotoFileField label="Pet photo" name="petPhoto" />
@@ -3240,6 +3365,7 @@ function AppHeader({
   isAuthenticated,
   logs,
   onLogForDate,
+  onCloseNotifications,
   onOpenOwnerProfile,
   onPrimary,
   onToggleNotifications,
@@ -3254,6 +3380,7 @@ function AppHeader({
   isAuthenticated: boolean;
   logs: LogEntry[];
   onLogForDate: (task: Task) => void;
+  onCloseNotifications: () => void;
   onOpenOwnerProfile: () => void;
   onPrimary: (task: Task) => void;
   onToggleNotifications: () => void;
@@ -3265,6 +3392,19 @@ function AppHeader({
 }) {
   const label = tabs.find((tab) => tab.id === activeTab)?.label ?? "Home";
   const ownerInitials = `${ownerProfile.firstName.charAt(0)}${ownerProfile.lastName.charAt(0)}`.trim() || "Me";
+  const notificationsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showNotifications) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (notificationsRef.current?.contains(event.target as Node)) return;
+      onCloseNotifications();
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [onCloseNotifications, showNotifications]);
 
   return (
     <header className="sticky top-0 z-10 border-b border-line/70 bg-background/92 px-5 pb-3 pt-[max(env(safe-area-inset-top),16px)] backdrop-blur sm:px-8 lg:px-10 lg:pb-5 lg:pt-6">
@@ -3280,7 +3420,7 @@ function AppHeader({
             Keep each pet&apos;s care current without extra admin work.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" ref={notificationsRef}>
           {!isAuthenticated ? (
             <form action={signInWithGoogle}>
               <button
@@ -3313,17 +3453,17 @@ function AppHeader({
           >
             {ownerInitials}
           </button>
+          {showNotifications ? (
+            <NotificationPanel
+              logs={logs}
+              onLogForDate={onLogForDate}
+              onPrimary={onPrimary}
+              onViewRecord={onViewRecord}
+              openTasks={openTasks}
+              pets={pets}
+            />
+          ) : null}
         </div>
-        {showNotifications ? (
-          <NotificationPanel
-            logs={logs}
-            onLogForDate={onLogForDate}
-            onPrimary={onPrimary}
-            onViewRecord={onViewRecord}
-            openTasks={openTasks}
-            pets={pets}
-          />
-        ) : null}
       </div>
     </header>
   );
@@ -5539,9 +5679,15 @@ function PetSwitcher({
 function AppModal({ children, modal, onClose }: { children: React.ReactNode; modal: ModalState; onClose: () => void }) {
   if (!modal) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/30 p-0 sm:items-center sm:justify-center sm:p-6">
-      <div className="max-h-[90dvh] w-full overflow-y-auto rounded-t-lg bg-surface p-5 shadow-xl sm:max-w-lg sm:rounded-lg">
-        <div className="mb-4 flex items-center justify-between gap-3">
+    <div
+      className="fixed inset-0 z-50 flex items-end bg-black/30 p-0 sm:items-center sm:justify-center sm:p-6"
+      onMouseDown={onClose}
+    >
+      <div
+        className="max-h-[90dvh] w-full overflow-y-auto rounded-t-lg bg-surface p-5 shadow-xl sm:max-w-lg sm:rounded-lg"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-4 flex items-center justify-between gap-3 border-b border-line bg-surface px-5 py-4">
           <p className="text-lg font-semibold text-ink">{modal.title}</p>
           <button aria-label="Close" className="grid h-10 w-10 place-items-center rounded-full border border-line bg-white" onClick={onClose} type="button">
             <X aria-hidden className="h-5 w-5" />
@@ -5568,7 +5714,10 @@ function AddPetForm({
         species: String(form.get("species") || "dog") as PetSpecies,
         breed: String(form.get("breed") || ""),
         ageLabel: String(form.get("ageLabel") || ""),
-        weight: String(form.get("weight") || ""),
+        dateOfBirth: String(form.get("dateOfBirth") || ""),
+        weight: formatWeightDisplay(String(form.get("weightValue") || ""), String(form.get("weightUnit") || "lb") === "kg" ? "kg" : "lb"),
+        weightUnit: String(form.get("weightUnit") || "lb") === "kg" ? "kg" : "lb",
+        weightValue: String(form.get("weightValue") || ""),
         behaviorNotes: String(form.get("behaviorNotes") || ""),
         photoFile: photoInput?.files?.[0] ?? null,
       });
@@ -5582,8 +5731,8 @@ function AddPetForm({
         </select>
       </label>
       <FormField label="Breed" name="breed" placeholder="Domestic shorthair" />
-      <FormField label="Age" name="ageLabel" placeholder="About 4 years" />
-      <FormField label="Weight" name="weight" placeholder="22 lb" />
+      <FormField label="Birth date" name="dateOfBirth" type="date" />
+      <WeightInputFields label="Weight" />
       <PhotoFileField label="Pet photo" name="petPhoto" />
       <TextAreaField label="Behavior notes" name="behaviorNotes" placeholder="Temperament, triggers, leash behavior, routines" />
       <SubmitButton label="Add pet" />
@@ -5822,10 +5971,17 @@ function EditPetSectionForm({
       const next = { ...pet };
 
       if (section === "profile") {
+        const weightUnit = String(form.get("weightUnit") || pet.weightUnit || "lb") === "kg" ? "kg" : "lb";
+        const weightValue = String(form.get("weightValue") || "");
+        const dateOfBirth = String(form.get("dateOfBirth") || "");
         next.name = String(form.get("name") || pet.name);
         next.breed = String(form.get("breed") || pet.breed);
-        next.ageLabel = String(form.get("ageLabel") || pet.ageLabel);
-        next.weight = String(form.get("weight") || pet.weight);
+        next.dateOfBirth = dateOfBirth || undefined;
+        next.ageLabel = dateOfBirth ? calculateAgeLabelFromBirthDate(dateOfBirth) : pet.ageLabel;
+        next.ageEstimated = !dateOfBirth;
+        next.weightValue = weightValue || undefined;
+        next.weightUnit = weightUnit;
+        next.weight = formatWeightDisplay(weightValue, weightUnit, pet.weight);
         next.sex = String(form.get("sex") || pet.sex) === "female" ? "female" : "male";
         next.dynamicFields = pet.dynamicFields.map((field) => ({
           label: field.label,
@@ -5869,11 +6025,11 @@ function EditPetSectionForm({
       {section === "profile" ? (
         <>
           <FormField defaultValue={pet.name} label="Pet name" name="name" required />
-          <PhotoFileField label="Change photo" name="petPhoto" />
+          <PhotoFileField currentUrl={pet.photo} label="Change photo" name="petPhoto" />
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField defaultValue={pet.breed} label="Breed" name="breed" />
-            <FormField defaultValue={pet.ageLabel} label="Age" name="ageLabel" />
-            <FormField defaultValue={pet.weight} label="Weight" name="weight" />
+            <FormField defaultValue={pet.dateOfBirth} label="Birth date" name="dateOfBirth" type="date" />
+            <WeightInputFields defaultUnit={pet.weightUnit ?? "lb"} defaultValue={pet.weightValue ?? ""} label="Weight" />
             <SelectField defaultValue={pet.sex} label="Sex" name="sex">
               <option value="male">Male</option>
               <option value="female">Female</option>
@@ -5964,34 +6120,50 @@ function ManageCareTeamForm({
   pet: Pet;
   providers: VetProvider[];
 }) {
+  const [primaryVetId, setPrimaryVetId] = useState(pet.primaryVetId ?? "");
+  const showSecondary = providers.length > 1 || Boolean(pet.secondaryVetId);
+  const secondaryOptions = providers.filter((provider) => provider.id !== primaryVetId);
+
   return (
     <div className="space-y-5">
       <form className="space-y-4" onSubmit={(event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
         onSubmit({
-          primaryVetId: String(form.get("primaryVetId") || ""),
+          primaryVetId,
           secondaryVetId: String(form.get("secondaryVetId") || ""),
           secondaryVetRole: String(form.get("secondaryVetRole") || ""),
         });
       }}>
-        <SelectField defaultValue={pet.primaryVetId ?? ""} label="Primary vet" name="primaryVetId">
+        <label className="block text-sm font-semibold text-ink">
+          Primary vet
+          <select
+            className="mt-2 h-11 w-full rounded-lg border border-line bg-white px-3"
+            name="primaryVetId"
+            onChange={(event) => setPrimaryVetId(event.target.value)}
+            value={primaryVetId}
+          >
           <option value="">No primary vet</option>
           {providers.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {provider.name}
             </option>
           ))}
-        </SelectField>
-        <SelectField defaultValue={pet.secondaryVetId ?? ""} label="Secondary vet" name="secondaryVetId">
-          <option value="">No secondary vet</option>
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-            {provider.name}
-          </option>
-          ))}
-        </SelectField>
-        <FormField defaultValue={pet.secondaryVetRole ?? ""} label="Secondary role" name="secondaryVetRole" placeholder="Behavior vet" />
+          </select>
+        </label>
+        {showSecondary ? (
+          <>
+            <SelectField defaultValue={pet.secondaryVetId === primaryVetId ? "" : pet.secondaryVetId ?? ""} label="Secondary vet" name="secondaryVetId">
+              <option value="">No secondary vet</option>
+              {secondaryOptions.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                </option>
+              ))}
+            </SelectField>
+            <FormField defaultValue={pet.secondaryVetRole ?? ""} label="Secondary role" name="secondaryVetRole" placeholder="Behavior vet" />
+          </>
+        ) : null}
         <SubmitButton label="Save care team" />
       </form>
 
@@ -5999,11 +6171,11 @@ function ManageCareTeamForm({
         <div className="flex min-h-10 items-center justify-between gap-3">
           <h3 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Saved vets and clinics</h3>
           <button
-            className="min-h-10 rounded-lg bg-ink px-3 text-sm font-semibold text-white"
+            className="min-h-10 rounded-lg px-2 text-sm font-semibold text-primary"
             onClick={onAddProvider}
             type="button"
           >
-            Add vet or clinic
+            + Add vet or clinic
           </button>
         </div>
         <div className="divide-y divide-line rounded-lg border border-line bg-surface px-3">
@@ -6011,9 +6183,9 @@ function ManageCareTeamForm({
             <div className="flex min-w-0 items-center gap-3 py-3" key={provider.id}>
               <div className="min-w-0 flex-1">
                 <p className="break-words text-sm font-semibold text-ink">{provider.name}</p>
-                <p className="mt-1 break-words text-xs leading-5 text-muted">
-                  {[provider.phone, provider.address].filter(Boolean).join(" - ") || "No contact details set"}
-                </p>
+                <p className="mt-1 break-words text-xs leading-5 text-muted">{provider.address || "No address set"}</p>
+                <p className="break-words text-xs leading-5 text-muted">{provider.phone || "No phone set"}</p>
+                <p className="break-all text-xs leading-5 text-muted">{provider.website || "No website set"}</p>
               </div>
               <IconButton icon={Pencil} label={`Edit ${provider.name}`} onClick={() => onEditProvider(provider)} />
             </div>
@@ -6025,9 +6197,11 @@ function ManageCareTeamForm({
 }
 
 function VetProviderForm({
+  onBack,
   onSubmit,
   provider,
 }: {
+  onBack?: () => void;
   onSubmit: (provider: VetProviderFormInput) => void;
   provider?: VetProvider;
 }) {
@@ -6043,6 +6217,12 @@ function VetProviderForm({
         notes: String(form.get("notes") || ""),
       });
     }}>
+      {onBack ? (
+        <button className="inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-primary" onClick={onBack} type="button">
+          <ArrowLeft aria-hidden className="h-4 w-4" />
+          Back to care team
+        </button>
+      ) : null}
       <FormField defaultValue={provider?.name} label="Clinic or vet name" name="name" required />
       <FormField defaultValue={provider?.phone} label="Phone" name="phone" inputMode="tel" />
       <FormField defaultValue={provider?.address} label="Address" name="address" />
@@ -7573,9 +7753,10 @@ function PetSharingAccess({
 
 function SharingAccessDetails({
   copiedShareLinkId,
+  documents,
   members,
   onCopyShareLink,
-  onCreateShareLink,
+  onCreateSharePacket,
   onInviteMember,
   onRemoveMember,
   onRevokeShareLink,
@@ -7585,9 +7766,10 @@ function SharingAccessDetails({
   shareLinks,
 }: {
   copiedShareLinkId: string | null;
+  documents: RecordDocument[];
   members: PetAccessMember[];
   onCopyShareLink: (linkId: string) => void;
-  onCreateShareLink: () => void;
+  onCreateSharePacket: () => void;
   onInviteMember: () => void;
   onRemoveMember: (member: PetAccessMember) => void;
   onRevokeShareLink: (link: ShareLink) => void;
@@ -7622,13 +7804,18 @@ function SharingAccessDetails({
       <section className="space-y-3">
         <div className="flex min-h-10 items-center justify-between gap-3">
           <h2 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Public links</h2>
-          <button className="min-h-10 rounded-lg bg-primary px-3 text-sm font-semibold text-white" onClick={onCreateShareLink} type="button">
-            Create vaccination link
+          <button className="min-h-10 rounded-lg bg-primary px-3 text-sm font-semibold text-white" onClick={onCreateSharePacket} type="button">
+            Create packet
           </button>
         </div>
         <p className="rounded-lg bg-background px-3 py-2 text-xs font-medium leading-5 text-muted">
-          Documents are excluded unless selected later.
+          Create named packets from selected documents. Anyone with the link can view only the documents you include.
         </p>
+        {documents.length === 0 ? (
+          <p className="rounded-lg bg-background px-3 py-2 text-xs font-medium leading-5 text-muted">
+            Upload documents first before creating a packet.
+          </p>
+        ) : null}
         {activeLinks.length === 0 ? (
           <p className="rounded-lg border border-line bg-background p-3 text-sm leading-6 text-muted">
             No public links are active for {pet.name}.
@@ -7727,6 +7914,52 @@ function ShareLinkRow({
   );
 }
 
+function SharePacketForm({
+  documents,
+  onSubmit,
+  pet,
+}: {
+  documents: RecordDocument[];
+  onSubmit: (input: { documentIds: string[]; includeOwnerContact: boolean; label: string }) => void;
+  pet: Pet;
+}) {
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit({
+        documentIds: form.getAll("documentIds").map(String).filter(Boolean),
+        includeOwnerContact: form.get("includeOwnerContact") === "on",
+        label: String(form.get("label") || ""),
+      });
+    }}>
+      <FormField defaultValue={`${pet.name} document packet`} label="Packet name" name="label" required />
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-ink">Documents</p>
+        {documents.length === 0 ? (
+          <p className="rounded-lg border border-line bg-background p-3 text-sm leading-6 text-muted">
+            No documents are saved for {pet.name} yet. Upload documents from Health or All documents first.
+          </p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto rounded-lg border border-line bg-background">
+            {documents.map((document) => (
+              <label className="flex min-h-12 cursor-pointer items-center gap-3 border-b border-line px-3 py-2 last:border-b-0" key={document.id}>
+                <input className="h-4 w-4 accent-primary" name="documentIds" type="checkbox" value={document.id} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{document.title}</span>
+                  <span className="block truncate text-xs text-muted">{document.documentType || document.recordType} · {document.addedLabel}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      <CheckboxField label="Include owner contact if available" name="includeOwnerContact" />
+      <SubmitButton label="Create packet" />
+    </form>
+  );
+}
+
 function InviteMemberForm({
   onSubmit,
   pet,
@@ -7758,21 +7991,39 @@ function InviteMemberForm({
 }
 
 function ShareLinkQrDetails({ link }: { link: ShareLink }) {
+  const [qrUrl, setQrUrl] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+    void QRCode.toDataURL(link.url, { margin: 1, width: 240 }).then((url) => {
+      if (active) setQrUrl(url);
+    });
+    return () => {
+      active = false;
+    };
+  }, [link.url]);
+
   return (
     <div className="space-y-4">
-      <div className="mx-auto grid h-44 w-44 grid-cols-5 gap-1 rounded-lg border border-line bg-white p-3">
-        {Array.from({ length: 25 }).map((_, index) => {
-          const filled = [0, 1, 2, 5, 7, 10, 11, 12, 17, 19, 20, 22, 24].includes(index) || index % 6 === 0;
-          return <span className={cn("rounded-sm", filled ? "bg-ink" : "bg-background")} key={index} />;
-        })}
+      <div className="mx-auto grid h-52 w-52 place-items-center rounded-lg border border-line bg-white p-3">
+        {qrUrl ? (
+          <Image
+            alt={`QR code for ${link.label}`}
+            className="h-full w-full"
+            height={208}
+            src={qrUrl}
+            unoptimized
+            width={208}
+          />
+        ) : (
+          <QrCode aria-hidden className="h-12 w-12 text-muted" />
+        )}
       </div>
       <div className="rounded-lg bg-background p-3">
         <p className="text-sm font-semibold text-ink">{link.label}</p>
         <p className="mt-1 break-all text-xs leading-5 text-muted">{link.url}</p>
       </div>
-      <p className="text-sm leading-6 text-muted">
-        QR placeholder for the prototype. Real QR generation will use the live share URL later.
-      </p>
+      <p className="text-sm leading-6 text-muted">Scan this QR code to open the public read-only packet link.</p>
     </div>
   );
 }
@@ -7791,9 +8042,11 @@ function CareTeamCard({
       <div className="py-3">
         <VetProviderSummary label="Primary vet" provider={primaryProvider} />
       </div>
-      <div className="py-3">
-        <VetProviderSummary label={secondaryRole || "Secondary vet"} provider={secondaryProvider} emptyText="No secondary vet" />
-      </div>
+      {secondaryProvider ? (
+        <div className="py-3">
+          <VetProviderSummary label={secondaryRole || "Secondary vet"} provider={secondaryProvider} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -7809,11 +8062,25 @@ function VetProviderSummary({ emptyText = "Not set", label, provider }: { emptyT
   }
 
   return (
-    <div className="min-w-0">
-      <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">{label}</p>
-      <h3 className="mt-1 break-words text-sm font-semibold text-ink">{provider.name}</h3>
-      <p className="mt-1 break-words text-xs leading-5 text-muted">{provider.phone}</p>
-      <p className="break-words text-xs leading-5 text-muted">{provider.address}</p>
+    <div className="flex min-w-0 items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">{label}</p>
+        <h3 className="mt-1 break-words text-sm font-semibold text-ink">{provider.name}</h3>
+        <p className="mt-1 break-words text-xs leading-5 text-muted">{provider.address}</p>
+        <p className="break-words text-xs leading-5 text-muted">{provider.phone}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap justify-end gap-1">
+        {provider.phone ? (
+          <a className="min-h-9 rounded-lg bg-white px-2 py-2 text-xs font-semibold text-primary" href={`tel:${provider.phone.replace(/[^+\d]/g, "")}`}>
+            Call
+          </a>
+        ) : null}
+        {provider.website ? (
+          <a className="min-h-9 rounded-lg bg-white px-2 py-2 text-xs font-semibold text-primary" href={provider.website.includes("@") && !provider.website.startsWith("http") ? `mailto:${provider.website}` : provider.website.startsWith("http") ? provider.website : `https://${provider.website}`} rel="noreferrer" target="_blank">
+            Link
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -8210,8 +8477,38 @@ function FileField({ label, name }: { label: string; name: string }) {
   );
 }
 
-function PhotoFileField({ label, name }: { label: string; name: string }) {
+function WeightInputFields({
+  defaultUnit = "lb",
+  defaultValue = "",
+  label,
+}: {
+  defaultUnit?: "lb" | "kg";
+  defaultValue?: string;
+  label: string;
+}) {
+  return (
+    <div>
+      <p className="text-sm font-semibold text-ink">{label}</p>
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_88px] gap-2">
+        <input
+          className="h-11 min-w-0 rounded-lg border border-line bg-white px-3 text-ink"
+          defaultValue={defaultValue}
+          inputMode="decimal"
+          name="weightValue"
+          placeholder="22"
+        />
+        <select className="h-11 rounded-lg border border-line bg-white px-2 text-sm font-semibold text-ink" defaultValue={defaultUnit} name="weightUnit">
+          <option value="lb">lb/lbs</option>
+          <option value="kg">kg</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function PhotoFileField({ currentUrl, label, name }: { currentUrl?: string; label: string; name: string }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const visibleUrl = previewUrl ?? currentUrl;
 
   return (
     <label className="block text-sm font-semibold text-ink">
@@ -8220,7 +8517,7 @@ function PhotoFileField({ label, name }: { label: string; name: string }) {
         <div
           aria-hidden
           className="h-24 w-24 rounded-lg border border-line bg-white bg-cover bg-center"
-          style={previewUrl ? { backgroundImage: `url(${previewUrl})` } : undefined}
+          style={visibleUrl ? { backgroundImage: `url(${visibleUrl})` } : undefined}
         />
         <div className="min-w-0">
           <input

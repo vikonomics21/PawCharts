@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { DocumentRecordType, MeasurementSnapshot, OwnerProfile, Pet, PetSpecies, RecordDocument, VetProvider } from "@/data/demo";
+import type { DocumentRecordType, MeasurementSnapshot, OwnerProfile, Pet, PetSpecies, RecordDocument, ShareLink, VetProvider } from "@/data/demo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   PET_DOCUMENT_BUCKET,
@@ -22,20 +22,26 @@ export type ProductionOnboardingInput = {
   ageLabel: string;
   breed: string;
   city: string;
+  dateOfBirth?: string;
   email: string;
   firstName: string;
   petName: string;
   species: PetSpecies;
   weight: string;
+  weightUnit?: "lb" | "kg";
+  weightValue?: string;
 };
 
 export type AddPetActionInput = {
   ageLabel: string;
   behaviorNotes: string;
   breed: string;
+  dateOfBirth?: string;
   name: string;
   species: PetSpecies;
   weight: string;
+  weightUnit?: "lb" | "kg";
+  weightValue?: string;
 };
 
 export type VetProviderActionInput = Omit<VetProvider, "householdId" | "id">;
@@ -55,6 +61,17 @@ type HouseholdMembershipRow = {
 };
 
 type PetWithCuesRow = Parameters<typeof mapPetRowToPet>[0];
+
+type ShareLinkRow = {
+  id: string;
+  pet_id: string;
+  label: string;
+  link_type: "vaccination_record" | "document_packet";
+  token: string;
+  show_owner_contact: boolean;
+  status: "active" | "revoked";
+  created_at: string;
+};
 
 export async function completeProductionOnboarding(input: ProductionOnboardingInput): Promise<{
   ownerProfile: OwnerProfile;
@@ -104,10 +121,13 @@ export async function completeProductionOnboarding(input: ProductionOnboardingIn
     ageLabel: input.ageLabel,
     behaviorNotes: "",
     breed: input.breed,
+    dateOfBirth: input.dateOfBirth,
     householdId: household.id,
     name: input.petName || "New pet",
     species: input.species,
     weight: input.weight,
+    weightUnit: input.weightUnit,
+    weightValue: input.weightValue,
   });
 
   revalidatePath("/");
@@ -151,8 +171,8 @@ export async function createProductionPet(input: AddPetActionInput): Promise<Pet
 
 export async function updateProductionPet(input: Pet): Promise<Pet> {
   const supabase = createSupabaseServerClient();
-  const age = parseAgeLabel(input.ageLabel);
-  const weight = parseWeight(input.weight);
+  const age = input.dateOfBirth ? { months: null, years: null } : parseAgeLabel(input.ageLabel);
+  const weight = parseStructuredWeight(input.weightValue, input.weightUnit, input.weight);
   const dogSize = findDynamicField(input, "Size");
   const dogGroomer = findDynamicField(input, "Groomer");
   const catLifestyle = findDynamicField(input, "Lifestyle");
@@ -163,7 +183,7 @@ export async function updateProductionPet(input: Pet): Promise<Pet> {
     .update({
       adoption_date: normalizeEmptyDate(input.background.adoptionDate),
       adoption_place: input.background.adoptionPlace || null,
-      age_is_estimated: input.ageEstimated,
+      age_is_estimated: input.dateOfBirth ? false : input.ageEstimated,
       approximate_age_months: age.months,
       approximate_age_years: age.years,
       behavior_notes: input.behaviorNotes,
@@ -172,6 +192,7 @@ export async function updateProductionPet(input: Pet): Promise<Pet> {
       cat_lifestyle: input.species === "cat" ? catLifestyle : null,
       cat_litter_preference: input.species === "cat" ? catLitter : null,
       disliked_foods: input.foodPreferences.dislikes,
+      date_of_birth: input.dateOfBirth || null,
       dog_groomer_notes: input.species === "dog" ? dogGroomer : null,
       dog_size: input.species === "dog" ? dogSize : null,
       favorite_foods: input.foodPreferences.favorites,
@@ -605,6 +626,105 @@ export async function createProductionDocumentSignedUrl(documentId: string): Pro
   return createDocumentSignedUrl(supabase, data.storage_path);
 }
 
+export async function createProductionSharePacket(input: {
+  documentIds: string[];
+  includeOwnerContact: boolean;
+  label: string;
+  petId: string;
+}): Promise<ShareLink> {
+  const { user } = await requireCurrentUser();
+  const supabase = createSupabaseServerClient();
+  const documentIds = Array.from(new Set(input.documentIds.filter(Boolean)));
+
+  if (!input.petId) {
+    throw new Error("Choose a pet before creating a packet.");
+  }
+
+  if (!input.label.trim()) {
+    throw new Error("Name this packet before creating the link.");
+  }
+
+  if (documentIds.length === 0) {
+    throw new Error("Select at least one document for this packet.");
+  }
+
+  const { data: pet, error: petError } = await supabase
+    .from("pets")
+    .select("id")
+    .eq("id", input.petId)
+    .single();
+
+  if (petError || !pet) {
+    throw petError ?? new Error("You do not have access to this pet.");
+  }
+
+  const { data: selectedDocuments, error: documentError } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("pet_id", input.petId)
+    .in("id", documentIds);
+
+  if (documentError) {
+    throw documentError;
+  }
+
+  if ((selectedDocuments ?? []).length !== documentIds.length) {
+    throw new Error("One or more selected documents could not be shared.");
+  }
+
+  const { data: link, error: linkError } = await supabase
+    .from("share_links")
+    .insert({
+      created_by: user.id,
+      label: input.label.trim(),
+      link_type: "document_packet",
+      pet_id: input.petId,
+      show_owner_contact: input.includeOwnerContact,
+      show_pet_photo: true,
+      show_vaccines: false,
+      status: "active",
+      token: crypto.randomUUID().replace(/-/g, ""),
+    })
+    .select("id, pet_id, label, link_type, token, show_owner_contact, status, created_at")
+    .single();
+
+  if (linkError) {
+    throw linkError;
+  }
+
+  const { error: linkDocumentsError } = await supabase.from("share_link_documents").insert(
+    documentIds.map((documentId) => ({
+      document_id: documentId,
+      share_link_id: link.id,
+    })),
+  );
+
+  if (linkDocumentsError) {
+    throw linkDocumentsError;
+  }
+
+  revalidatePath("/");
+
+  return mapShareLinkRow(link as ShareLinkRow, documentIds);
+}
+
+export async function revokeProductionShareLink(linkId: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("share_links")
+    .update({
+      revoked_at: new Date().toISOString(),
+      status: "revoked",
+    })
+    .eq("id", linkId);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+}
+
 export async function createProductionVetProvider(input: VetProviderActionInput): Promise<VetProvider> {
   const {
     membership: { household_id: householdId },
@@ -818,17 +938,18 @@ async function insertPet(
   supabase: ReturnType<typeof createSupabaseServerClient> | ReturnType<typeof createSupabaseAdminClient>,
   input: AddPetActionInput & { householdId: string },
 ) {
-  const age = parseAgeLabel(input.ageLabel);
-  const weight = parseWeight(input.weight);
+  const age = input.dateOfBirth ? { months: null, years: null } : parseAgeLabel(input.ageLabel);
+  const weight = parseStructuredWeight(input.weightValue, input.weightUnit, input.weight);
 
   const { data, error } = await supabase
     .from("pets")
     .insert({
-      age_is_estimated: true,
+      age_is_estimated: input.dateOfBirth ? false : true,
       approximate_age_months: age.months,
       approximate_age_years: age.years,
       behavior_notes: input.behaviorNotes || "",
       breed: input.breed || null,
+      date_of_birth: input.dateOfBirth || null,
       household_id: input.householdId,
       name: input.name || "New pet",
       species: input.species,
@@ -999,6 +1120,19 @@ function parseWeight(weight: string) {
   };
 }
 
+function parseStructuredWeight(value: string | undefined, unit: string | undefined, fallback: string) {
+  const parsed = Number(value || "");
+
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return {
+      unit: unit === "kg" ? "kg" : "lb",
+      value: parsed,
+    };
+  }
+
+  return parseWeight(fallback);
+}
+
 function parseOptionalNumber(value: string | undefined) {
   const parsed = Number(value || "");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -1014,4 +1148,32 @@ function findDynamicField(pet: Pet, label: string) {
 
 function normalizeEmptyDate(value: string) {
   return value.trim() ? value : null;
+}
+
+function getPublicSiteUrl() {
+  return (process.env.NEXT_PUBLIC_SITE_URL || process.env.PUBLIC_SITE_URL || "https://pets.vikonomics.com").replace(/\/$/, "");
+}
+
+function mapShareLinkRow(row: ShareLinkRow, documentIds: string[] = []): ShareLink {
+  return {
+    id: row.id,
+    petId: row.pet_id,
+    label: row.label,
+    type: row.link_type === "document_packet" ? "Document packet" : "Vaccination record",
+    token: row.token,
+    url: `${getPublicSiteUrl()}/share/${row.token}`,
+    includeOwnerContact: row.show_owner_contact,
+    status: row.status === "active" ? "Active" : "Revoked",
+    createdLabel: formatShortDate(row.created_at),
+    documentIds,
+  };
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
 }

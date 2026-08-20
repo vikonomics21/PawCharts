@@ -41,6 +41,7 @@ export default async function Home() {
           documents: productionWorkspace.documents,
           measurements: productionWorkspace.measurements,
           pets: productionWorkspace.pets,
+          shareLinks: productionWorkspace.shareLinks,
           vetProviders: productionWorkspace.vetProviders,
         };
         workspace = productionWorkspace.workspace;

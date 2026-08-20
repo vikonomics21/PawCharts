@@ -1,6 +1,6 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
-import type { OwnerProfile, VetProvider } from "@/data/demo";
+import type { OwnerProfile, ShareLink, VetProvider } from "@/data/demo";
 import { fetchDocumentsForCurrentUser } from "@/lib/supabase/documents";
 import { fetchMeasurementsForCurrentUser } from "@/lib/supabase/measurements";
 import { fetchPetsForCurrentUser } from "@/lib/supabase/pets";
@@ -50,8 +50,20 @@ type VetProviderRow = {
   notes: string | null;
 };
 
+type ShareLinkRow = {
+  id: string;
+  pet_id: string;
+  label: string;
+  link_type: "vaccination_record" | "document_packet";
+  token: string;
+  show_owner_contact: boolean;
+  status: "active" | "revoked";
+  created_at: string;
+  share_link_documents?: { document_id: string }[];
+};
+
 export async function fetchProductionWorkspace(supabase: SupabaseClient, user: User) {
-  const [profileResult, membershipResult, pets, archivedPets, documents, measurements] = await Promise.all([
+  const [profileResult, membershipResult, pets, archivedPets, documents, measurements, shareLinks] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, email, first_name, last_name, phone, city")
@@ -68,6 +80,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
     fetchPetsForCurrentUser(supabase, { archived: true }),
     fetchDocumentsForCurrentUser(supabase),
     fetchMeasurementsForCurrentUser(supabase),
+    fetchShareLinksForCurrentUser(supabase),
   ]);
 
   if (profileResult.error) {
@@ -88,6 +101,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
     documents,
     measurements,
     pets,
+    shareLinks,
     vetProviders,
     workspace: {
       household: membershipRow?.households
@@ -105,6 +119,30 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
         : null,
     } satisfies PawChartWorkspace,
   };
+}
+
+export async function fetchShareLinksForCurrentUser(supabase: SupabaseClient): Promise<ShareLink[]> {
+  const { data, error } = await supabase
+    .from("share_links")
+    .select("id, pet_id, label, link_type, token, show_owner_contact, status, created_at, share_link_documents(document_id)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as ShareLinkRow[]).map((row) => ({
+    id: row.id,
+    petId: row.pet_id,
+    label: row.label,
+    type: row.link_type === "document_packet" ? "Document packet" : "Vaccination record",
+    token: row.token,
+    url: `${getPublicSiteUrl()}/share/${row.token}`,
+    includeOwnerContact: row.show_owner_contact,
+    status: row.status === "active" ? "Active" : "Revoked",
+    createdLabel: formatShortDate(row.created_at),
+    documentIds: (row.share_link_documents ?? []).map((document) => document.document_id),
+  }));
 }
 
 export async function fetchVetProvidersForHousehold(supabase: SupabaseClient, householdId: string): Promise<VetProvider[]> {
@@ -142,4 +180,17 @@ export function mapVetProviderRow(row: VetProviderRow): VetProvider {
     website: row.website ?? "",
     notes: row.notes ?? "",
   };
+}
+
+function getPublicSiteUrl() {
+  return (process.env.NEXT_PUBLIC_SITE_URL || process.env.PUBLIC_SITE_URL || "https://pets.vikonomics.com").replace(/\/$/, "");
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
 }
