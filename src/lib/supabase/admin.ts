@@ -2,9 +2,11 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { getSupabaseSecretKey, getSupabaseUrl } from "@/lib/supabase/env";
+
 export function createSupabaseAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = getSupabaseUrl();
+  const supabaseSecretKey = getSupabaseSecretKey();
 
   if (!supabaseUrl || !supabaseSecretKey) {
     throw new Error("Missing Supabase admin environment variables.");

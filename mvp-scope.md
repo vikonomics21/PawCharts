@@ -11,6 +11,8 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Multiple pets per household.
 - Mock owner profile for greeting and auth-ready personal info editing.
 - Pet profiles with overview, species details, behavior, care preferences, medical notes, and compact sharing/access.
+- Persistent private pet photos backed by Supabase Storage.
+- Reversible pet archive for pets that pass away or are no longer in the owner's care.
 - Training cues profile summary with a full-list detail view.
 - Adoption/background and food preference profile sections.
 - Compact pet measurements entry point backed by dated body-measurement snapshots for weight, length, height, collar circumference, and chest circumference.
@@ -50,6 +52,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Larger/resumable file uploads if private beta usage needs them.
 - Public share pages backed by live data.
 - Stripe subscriptions and paywall behavior.
+- V2 pricing tier enforcement, multi-pet/household-sharing entitlements, and AI add-on packaging.
 - Push notifications.
 - AI PDF parsing with owner review before any extracted fields are saved.
 - AI-assisted bill extraction and suggested record creation.

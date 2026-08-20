@@ -18,6 +18,7 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Existing records content should be reframed into `Health` and `Calendar` without duplicating underlying records.
 - Home setup checklists should be compact and action-oriented. Each row should explain the next useful setup step briefly and navigate directly to the resolving tab, section, or modal.
 - Upload-assisted onboarding can be offered, but AI-extracted values should never be written automatically; owners must review and confirm suggested fields before saving.
+- First-pet onboarding should not show disabled or unavailable choices. Upload records after the pet exists instead of presenting an inactive setup path.
 - Health should use visible sections instead of a horizontally scrolling records tab control.
 - Health shortcuts should be visible as compact wrapping pill buttons when six destinations are present.
 - Health shortcuts should look and behave like tappable white icon buttons, with the icon next to the label and a clear visual target for each destination.
@@ -166,6 +167,7 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Measurement history should include a direct `Log measurements` action.
 - Body dimensions should remain in the Measurements detail/history surface and not expand the compact profile snapshot.
 - Sharing/access should summarize first and move detailed member/share-link controls behind one manage action.
+- Pets should be archived with confirmation when they are no longer active. Archived pets should be hidden from active workflows but remain restorable and keep their history.
 
 ## Lists And Kits
 

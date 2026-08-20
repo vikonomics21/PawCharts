@@ -37,6 +37,7 @@ import Image from "next/image";
 import { FormEvent, useMemo, useState } from "react";
 
 import {
+  archiveProductionPet,
   completeProductionOnboarding,
   createProductionPet,
   createProductionVetProvider,
@@ -49,6 +50,7 @@ import {
   updateProductionVetProvider,
   deleteProductionDocument,
   renameProductionDocument,
+  restoreProductionPet,
   uploadProductionDocument,
 } from "@/app/pawchart-production-actions";
 import {
@@ -95,6 +97,8 @@ type ModalState =
   | { title: string; type: "global-add" }
   | { title: string; type: "add-pet" }
   | { title: string; type: "edit-pet"; pet: Pet; section: PetEditSection }
+  | { title: string; type: "archive-pet"; pet: Pet }
+  | { title: string; type: "archived-pets" }
   | { title: string; type: "add-observation"; petId: string }
   | { title: string; type: "quick-care"; petId: string }
   | { title: string; type: "add-vet-note"; petId: string }
@@ -220,9 +224,12 @@ type OnboardingInput = {
   breed: string;
   ageLabel: string;
   weight: string;
-  setupStyle: "simple" | "upload";
   photoFile: File | null;
-  files: FileList | null;
+};
+
+type ArchivePetInput = {
+  reason: NonNullable<Pet["archivedReason"]>;
+  notes: string;
 };
 
 type PetFormSubmitInput = {
@@ -262,6 +269,7 @@ type ShareLink = {
 export type PawChartDataMode = "local-demo" | "production";
 
 export type PawChartInitialData = Partial<{
+  archivedPets: Pet[];
   careEvents: CareEvent[];
   documents: RecordDocument[];
   logs: LogEntry[];
@@ -408,6 +416,7 @@ const demoMeasurementSnapshots: MeasurementSnapshot[] = [
 ];
 
 const localDemoInitialData: Required<PawChartInitialData> = {
+  archivedPets: [],
   careEvents: demoCareEvents,
   documents: demoDocuments,
   logs: demoLogEntries,
@@ -425,6 +434,7 @@ const localDemoInitialData: Required<PawChartInitialData> = {
 };
 
 const productionInitialData: Required<PawChartInitialData> = {
+  archivedPets: [],
   careEvents: [],
   documents: [],
   logs: [],
@@ -479,6 +489,7 @@ export function PawChartApp({
   const isLocalDemo = resolvedAppMode === "local-demo";
   const [activeTab, setActiveTab] = useState<Tab>("home");
   const [pets, setPets] = useState<Pet[]>(() => resolvedInitialData.pets);
+  const [archivedPets, setArchivedPets] = useState<Pet[]>(() => resolvedInitialData.archivedPets);
   const [selectedPetId, setSelectedPetId] = useState(resolvedInitialData.pets[0]?.id ?? "");
   const [tasks, setTasks] = useState<Task[]>(() => resolvedInitialData.tasks);
   const [vaccines, setVaccines] = useState<VaccineRecord[]>(() => resolvedInitialData.vaccines);
@@ -506,10 +517,14 @@ export function PawChartApp({
   const [measurements, setMeasurements] = useState<MeasurementSnapshot[]>(() => resolvedInitialData.measurements);
 
   const selectedPet = pets.find((pet) => pet.id === selectedPetId) ?? pets[0];
-  const scheduledTasks = useMemo(() => tasks.filter((task) => !task.completed), [tasks]);
+  const activePetIds = useMemo(() => new Set(pets.map((pet) => pet.id)), [pets]);
+  const scheduledTasks = useMemo(
+    () => tasks.filter((task) => !task.completed && activePetIds.has(task.petId)),
+    [activePetIds, tasks],
+  );
   const dueTasks = useMemo(
-    () => scheduledTasks.filter((task) => task.dueDate <= todayValue),
-    [scheduledTasks],
+    () => scheduledTasks.filter((task) => activePetIds.has(task.petId) && task.dueDate <= todayValue),
+    [activePetIds, scheduledTasks],
   );
 
   if (resolvedAppMode === "production" && !isAuthenticated) {
@@ -642,6 +657,7 @@ export function PawChartApp({
         }
 
         setOwnerProfile(result.ownerProfile);
+        setArchivedPets([]);
         setPets([savedPet]);
         setSelectedPetId(savedPet.id);
         setVetProviders(result.vetProviders);
@@ -692,20 +708,6 @@ export function PawChartApp({
             ],
       trainingCues: input.species === "dog" ? [] : undefined,
     };
-    const uploadedDocuments = Array.from(input.files ?? []).map((file, index) => ({
-      createdAt: new Date(Date.now() + index).toISOString(),
-      documentGroupId: `onboarding:${petId}:records`,
-      id: `doc-onboarding-${petId}-${Date.now()}-${index}`,
-      petId,
-      recordId: petId,
-      recordType: "pet" as const,
-      title: file.name,
-      fileType: file.type === "application/pdf" ? ("pdf" as const) : ("image" as const),
-      sizeLabel: formatFileSize(file.size),
-      addedLabel: "Just now",
-      privateByDefault: true,
-      versionLabel: "Latest",
-    }));
     const completeLaterKit: PetKit = {
       id: `kit-complete-later-${petId}`,
       title: `${pet.name} setup checklist`,
@@ -713,14 +715,14 @@ export function PawChartApp({
       petIds: [petId],
       sourceTemplateId: "template-blank",
       checklistItems: [
-        { id: `setup-${petId}-vaccines`, itemType: "document", label: "Add vaccine records", completed: uploadedDocuments.length > 0, petId, documentType: "vaccination-records", documentId: uploadedDocuments[0]?.id },
+        { id: `setup-${petId}-vaccines`, itemType: "document", label: "Add vaccine records", completed: false, petId, documentType: "vaccination-records" },
         { id: `setup-${petId}-vet`, itemType: "task", label: "Add primary vet", completed: false },
         { id: `setup-${petId}-routine`, itemType: "task", label: "Create first care routine", completed: false },
         { id: `setup-${petId}-food`, itemType: "task", label: "Add food preferences", completed: false },
         { id: `setup-${petId}-microchip`, itemType: "document", label: "Add microchip or registration info", completed: false, petId, documentType: "microchip-info" },
       ],
       documentLinks: [],
-      notes: input.setupStyle === "upload" ? "Uploaded records are saved privately. AI parsing comes later." : "Add more context when it becomes useful.",
+      notes: "Add more context when it becomes useful.",
     };
 
     setOwnerProfile((current) => ({
@@ -730,8 +732,8 @@ export function PawChartApp({
       firstName: input.firstName || current.firstName,
     }));
     setPets([pet]);
+    setArchivedPets([]);
     setSelectedPetId(pet.id);
-    if (uploadedDocuments.length > 0) setDocuments((current) => [...uploadedDocuments, ...current]);
     setPetKits([completeLaterKit]);
     setOnboardingDismissed(true);
     setActiveTab("home");
@@ -771,6 +773,66 @@ export function PawChartApp({
     setPets((current) =>
       current.map((pet) => (pet.id === petId ? { ...pet, photo: localPhotoUrl(photoFile, pet.species) } : pet)),
     );
+  }
+
+  async function archivePet(pet: Pet, input: ArchivePetInput) {
+    if (!isLocalDemo) {
+      try {
+        const archivedPet = await archiveProductionPet({
+          notes: input.notes,
+          petId: pet.id,
+          reason: input.reason,
+        });
+        setPets((current) => current.filter((item) => item.id !== pet.id));
+        setArchivedPets((current) => [archivedPet, ...current.filter((item) => item.id !== pet.id)]);
+        const nextPet = pets.find((item) => item.id !== pet.id);
+        setSelectedPetId(nextPet?.id ?? "");
+        setModal(null);
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    const archivedPet: Pet = {
+      ...pet,
+      archivedAt: new Date().toISOString(),
+      archivedNotes: input.notes,
+      archivedReason: input.reason,
+    };
+    setPets((current) => current.filter((item) => item.id !== pet.id));
+    setArchivedPets((current) => [archivedPet, ...current.filter((item) => item.id !== pet.id)]);
+    const nextPet = pets.find((item) => item.id !== pet.id);
+    setSelectedPetId(nextPet?.id ?? "");
+    setModal(null);
+  }
+
+  async function restorePet(pet: Pet) {
+    if (!isLocalDemo) {
+      try {
+        const restoredPet = await restoreProductionPet(pet.id);
+        setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
+        setPets((current) => [...current, restoredPet]);
+        setSelectedPetId(restoredPet.id);
+        setModal(null);
+        setActiveTab("pets");
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    const restoredPet = {
+      ...pet,
+      archivedAt: undefined,
+      archivedNotes: undefined,
+      archivedReason: undefined,
+    };
+    setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
+    setPets((current) => [...current, restoredPet]);
+    setSelectedPetId(restoredPet.id);
+    setModal(null);
+    setActiveTab("pets");
   }
 
   function addVetPrepItem(input: { petId: string; title: string; details: string; observedOn: string }) {
@@ -2119,11 +2181,57 @@ export function PawChartApp({
   if (!onboardingDismissed && pets.length === 0) {
     return (
       <OnboardingView
-        appMode={resolvedAppMode}
         authEmail={authEmail}
         ownerProfile={ownerProfile}
         onSubmit={completeOnboarding}
       />
+    );
+  }
+
+  if (pets.length === 0) {
+    return (
+      <main className="min-h-dvh bg-background px-5 py-8 text-foreground sm:px-8">
+        <section className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-xl items-center">
+          <div className="w-full rounded-lg border border-line bg-surface p-5 text-center shadow-sm sm:p-7">
+            <span className="mx-auto grid h-12 w-12 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Dog aria-hidden className="h-6 w-6" />
+            </span>
+            <h1 className="mt-4 text-2xl font-semibold text-ink">No active pets</h1>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Add a pet to continue using PawChart, or restore an archived pet.
+            </p>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                className="min-h-11 rounded-lg bg-ink px-4 text-sm font-semibold text-white"
+                onClick={() => setModal({ title: "Add pet", type: "add-pet" })}
+                type="button"
+              >
+                Add pet
+              </button>
+              <button
+                className="min-h-11 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink"
+                onClick={() => setModal({ title: "Archived pets", type: "archived-pets" })}
+                type="button"
+              >
+                Archived pets
+              </button>
+            </div>
+            {isAuthenticated ? (
+              <form action={signOut} className="mt-4">
+                <button className="text-sm font-semibold text-muted underline" type="submit">
+                  Sign out
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </section>
+        <AppModal modal={modal} onClose={() => setModal(null)}>
+          {modal?.type === "add-pet" && <AddPetForm onSubmit={addPet} />}
+          {modal?.type === "archived-pets" && (
+            <ArchivedPetsList archivedPets={archivedPets} onRestore={restorePet} />
+          )}
+        </AppModal>
+      </main>
     );
   }
 
@@ -2219,8 +2327,10 @@ export function PawChartApp({
                   dismissVetPrepItem={dismissVetPrepItem}
                   markVetPrepAddressed={markVetPrepAddressed}
                   measurements={measurements.filter((measurement) => measurement.petId === selectedPet.id)}
+                  archivedPetCount={archivedPets.length}
                   onAddPet={() => setModal({ title: "Add pet", type: "add-pet" })}
                   onAddVetNote={() => setModal({ title: "Add vet note", type: "add-vet-note", petId: selectedPet.id })}
+                  onArchivePet={() => setModal({ title: `Archive ${selectedPet.name}?`, type: "archive-pet", pet: selectedPet })}
                   onChangeVet={() => setModal({ title: "Manage care team", type: "change-vet", pet: selectedPet })}
                   onEditPet={(section) =>
                     setModal({
@@ -2240,6 +2350,7 @@ export function PawChartApp({
                     })
                   }
                   onManageSharing={() => setModal({ title: "Sharing and access", type: "sharing-access", pet: selectedPet })}
+                  onOpenArchivedPets={() => setModal({ title: "Archived pets", type: "archived-pets" })}
                   onPhotoChange={changePetPhoto}
                   onViewTrainingCues={() => setModal({ title: "Training cues", type: "training-cues", pet: selectedPet })}
                   onViewMeasurements={() => setModal({ title: "Measurements", type: "pet-measurements", petId: selectedPet.id })}
@@ -2317,6 +2428,16 @@ export function PawChartApp({
         {modal?.type === "add-pet" && <AddPetForm onSubmit={addPet} />}
         {modal?.type === "edit-pet" && (
           <EditPetSectionForm onSubmit={updatePet} pet={modal.pet} section={modal.section} />
+        )}
+        {modal?.type === "archive-pet" && (
+          <ArchivePetForm
+            onCancel={() => setModal(null)}
+            onSubmit={(input) => void archivePet(modal.pet, input)}
+            pet={modal.pet}
+          />
+        )}
+        {modal?.type === "archived-pets" && (
+          <ArchivedPetsList archivedPets={archivedPets} onRestore={restorePet} />
         )}
         {modal?.type === "add-vet-note" && (
           <VetPrepItemForm onSubmit={(input) => addVetPrepItem({ ...input, petId: modal.petId })} />
@@ -2738,18 +2859,14 @@ export function PawChartApp({
 }
 
 function OnboardingView({
-  appMode,
   authEmail,
   onSubmit,
   ownerProfile,
 }: {
-  appMode: PawChartDataMode;
   authEmail: string | null;
   onSubmit: (input: OnboardingInput) => void;
   ownerProfile: OwnerProfile;
 }) {
-  const isLocalDemo = appMode === "local-demo";
-
   return (
     <main className="min-h-dvh bg-background px-5 py-8 text-foreground sm:px-8">
       <section className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-3xl items-center">
@@ -2768,18 +2885,15 @@ function OnboardingView({
           <form className="space-y-5" onSubmit={(event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
-            const recordInput = event.currentTarget.elements.namedItem("records") as HTMLInputElement | null;
             const photoInput = event.currentTarget.elements.namedItem("petPhoto") as HTMLInputElement | null;
             onSubmit({
               ageLabel: String(form.get("ageLabel") || ""),
               breed: String(form.get("breed") || ""),
               city: String(form.get("city") || ""),
               email: String(form.get("email") || ""),
-              files: recordInput?.files ?? null,
               firstName: String(form.get("firstName") || ""),
               petName: String(form.get("petName") || ""),
               photoFile: photoInput?.files?.[0] ?? null,
-              setupStyle: String(form.get("setupStyle") || "simple") as OnboardingInput["setupStyle"],
               species: String(form.get("species") || "dog") as PetSpecies,
               weight: String(form.get("weight") || ""),
             });
@@ -2803,35 +2917,9 @@ function OnboardingView({
 
             <PhotoFileField label="Pet photo" name="petPhoto" />
 
-            <section className="grid gap-3 sm:grid-cols-2">
-              <label className="rounded-lg border border-line bg-background p-3">
-                <input className="mr-2" defaultChecked name="setupStyle" type="radio" value="simple" />
-                <span className="text-sm font-semibold text-ink">Start simple</span>
-                <span className="mt-1 block text-xs leading-5 text-muted">Create the profile now and fill in records later.</span>
-              </label>
-              <label className="rounded-lg border border-line bg-background p-3">
-                <input className="mr-2" disabled={!isLocalDemo} name="setupStyle" type="radio" value="upload" />
-                <span className="text-sm font-semibold text-ink">Upload records</span>
-                <span className="mt-1 block text-xs leading-5 text-muted">Add vaccine, adoption, or vet files. Parsing is mocked for now.</span>
-              </label>
-            </section>
-
-            {isLocalDemo ? (
-              <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-ink">Optional records</span>
-                <input
-                  accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
-                  className="block w-full rounded-lg border border-line bg-white px-3 py-3 text-sm"
-                  multiple
-                  name="records"
-                  type="file"
-                />
-              </label>
-            ) : (
-              <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
-                Start simple now, then upload vaccine, vet, and other records from Home or Health once this pet is created.
-              </p>
-            )}
+            <p className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+              Start with the profile now. After this pet is created, you can upload vaccine, vet, and other records from Home or Health.
+            </p>
 
             <SubmitButton label="Start PawChart" />
           </form>
@@ -4491,15 +4579,18 @@ function ManageScheduleList({
 }
 
 function PetsView({
+  archivedPetCount,
   carryVetPrepItem,
   dismissVetPrepItem,
   markVetPrepAddressed,
   measurements,
   onAddPet,
   onAddVetNote,
+  onArchivePet,
   onChangeVet,
   onEditPet,
   onManageSharing,
+  onOpenArchivedPets,
   onPhotoChange,
   onViewTrainingCues,
   onViewMeasurements,
@@ -4512,15 +4603,18 @@ function PetsView({
   vetProviders,
   vetPrepItems,
 }: {
+  archivedPetCount: number;
   carryVetPrepItem: (itemId: string) => void;
   dismissVetPrepItem: (itemId: string) => void;
   markVetPrepAddressed: (itemId: string) => void;
   measurements: MeasurementSnapshot[];
   onAddPet: () => void;
   onAddVetNote: () => void;
+  onArchivePet: () => void;
   onChangeVet: () => void;
   onEditPet: (section: PetEditSection) => void;
   onManageSharing: () => void;
+  onOpenArchivedPets: () => void;
   onPhotoChange: (petId: string, file: File | null) => void;
   onViewTrainingCues: () => void;
   onViewMeasurements: () => void;
@@ -4547,6 +4641,25 @@ function PetsView({
         selectedPetId={selectedPetId}
         setSelectedPetId={setSelectedPetId}
       />
+
+      <div className="flex flex-wrap justify-end gap-2">
+        {archivedPetCount > 0 ? (
+          <button
+            className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink"
+            onClick={onOpenArchivedPets}
+            type="button"
+          >
+            Archived pets ({archivedPetCount})
+          </button>
+        ) : null}
+        <button
+          className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-muted"
+          onClick={onArchivePet}
+          type="button"
+        >
+          Archive pet
+        </button>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <article className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
@@ -5355,6 +5468,90 @@ function AddPetForm({
       <TextAreaField label="Behavior notes" name="behaviorNotes" placeholder="Temperament, triggers, leash behavior, routines" />
       <SubmitButton label="Add pet" />
     </form>
+  );
+}
+
+function ArchivePetForm({
+  onCancel,
+  onSubmit,
+  pet,
+}: {
+  onCancel: () => void;
+  onSubmit: (input: ArchivePetInput) => void;
+  pet: Pet;
+}) {
+  return (
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      onSubmit({
+        notes: String(form.get("notes") || ""),
+        reason: String(form.get("reason") || "other") as ArchivePetInput["reason"],
+      });
+    }}>
+      <div className="rounded-lg bg-background p-3 text-sm leading-6 text-muted">
+        Archive {pet.name} if this pet is no longer active in your household. Records, documents, measurements, and history stay saved.
+      </div>
+      <SelectField defaultValue="no-longer-owned" label="Reason" name="reason">
+        <option value="passed-away">Passed away</option>
+        <option value="no-longer-owned">No longer in my care</option>
+        <option value="other">Other</option>
+      </SelectField>
+      <TextAreaField label="Notes" name="notes" placeholder="Optional context for this archive" />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <button
+          className="min-h-11 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink"
+          onClick={onCancel}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button className="min-h-11 rounded-lg bg-ink px-4 text-sm font-semibold text-white" type="submit">
+          Archive pet
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ArchivedPetsList({
+  archivedPets,
+  onRestore,
+}: {
+  archivedPets: Pet[];
+  onRestore: (pet: Pet) => void;
+}) {
+  if (archivedPets.length === 0) {
+    return (
+      <div className="rounded-lg bg-background p-4 text-sm leading-6 text-muted">
+        No archived pets yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {archivedPets.map((pet) => (
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-line bg-white p-3" key={pet.id}>
+          <div className="flex min-w-0 items-center gap-3">
+            <PetAvatar pet={pet} size="xs" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-ink">{pet.name}</p>
+              <p className="truncate text-xs text-muted">
+                {archiveReasonLabel(pet.archivedReason)}{pet.archivedAt ? ` - ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}` : ""}
+              </p>
+            </div>
+          </div>
+          <button
+            className="min-h-10 shrink-0 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-primary"
+            onClick={() => onRestore(pet)}
+            type="button"
+          >
+            Restore
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -8744,6 +8941,12 @@ function uniqueId(base: string, existingIds: string[]) {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function archiveReasonLabel(reason: Pet["archivedReason"]) {
+  if (reason === "passed-away") return "Passed away";
+  if (reason === "no-longer-owned") return "No longer in my care";
+  return "Archived";
 }
 
 function isDefaultPetPhoto(value: string) {

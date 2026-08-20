@@ -51,7 +51,7 @@ type VetProviderRow = {
 };
 
 export async function fetchProductionWorkspace(supabase: SupabaseClient, user: User) {
-  const [profileResult, membershipResult, pets, documents, measurements] = await Promise.all([
+  const [profileResult, membershipResult, pets, archivedPets, documents, measurements] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, email, first_name, last_name, phone, city")
@@ -65,6 +65,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
       .limit(1)
       .maybeSingle(),
     fetchPetsForCurrentUser(supabase),
+    fetchPetsForCurrentUser(supabase, { archived: true }),
     fetchDocumentsForCurrentUser(supabase),
     fetchMeasurementsForCurrentUser(supabase),
   ]);
@@ -83,6 +84,7 @@ export async function fetchProductionWorkspace(supabase: SupabaseClient, user: U
 
   return {
     ownerProfile: mapProfileToOwnerProfile(profileResult.data as ProfileRow | null, user),
+    archivedPets,
     documents,
     measurements,
     pets,

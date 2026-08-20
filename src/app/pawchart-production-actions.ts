@@ -241,6 +241,68 @@ export async function updateProductionPetPhoto(formData: FormData): Promise<Pet>
   return pet;
 }
 
+export async function archiveProductionPet(input: {
+  petId: string;
+  reason: NonNullable<Pet["archivedReason"]>;
+  notes: string;
+}): Promise<Pet> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("pets")
+    .update({
+      archived_at: new Date().toISOString(),
+      archived_notes: input.notes.trim() || null,
+      archived_reason: input.reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.petId);
+
+  if (error) {
+    throw error;
+  }
+
+  const pet = await fetchPetById(input.petId);
+
+  if (!pet) {
+    throw new Error("Pet was archived, but could not be reloaded.");
+  }
+
+  revalidatePath("/");
+
+  return pet;
+}
+
+export async function restoreProductionPet(petId: string): Promise<Pet> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("pets")
+    .update({
+      archived_at: null,
+      archived_notes: null,
+      archived_reason: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", petId);
+
+  if (error) {
+    throw error;
+  }
+
+  const pet = await fetchPetById(petId);
+
+  if (!pet) {
+    throw new Error("Pet was restored, but could not be reloaded.");
+  }
+
+  revalidatePath("/");
+
+  return pet;
+}
+
+export async function fetchProductionPet(petId: string): Promise<Pet | null> {
+  return fetchPetById(petId);
+}
+
 export async function createProductionMeasurementSnapshot(input: MeasurementSnapshot): Promise<MeasurementSnapshot> {
   const { supabase, user } = await requireCurrentUser();
   const measuredAt = input.measuredOn || new Date().toISOString().slice(0, 10);

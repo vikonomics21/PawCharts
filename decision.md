@@ -9,6 +9,7 @@ This file tracks important product and technical decisions so the project does n
 - `ux-patterns.md` defines reusable interaction patterns for the app.
 - `mvp-scope.md` defines what is in scope now versus later.
 - `decision.md` remains the place for concrete product and technical decisions already made.
+- `v2-pricing-ai-strategy.md` preserves future monetization, paywall, and AI strategy without mixing it into MVP execution.
 - Meaningful product, backend, sharing, or scope changes should check the relevant memory files before implementation.
 - Small fixes like layout bugs, broken buttons, copy tweaks, or visual polish do not need memory-file updates unless they change the product model.
 
@@ -73,6 +74,7 @@ This file tracks important product and technical decisions so the project does n
 - Household sharing/access should live inside the selected pet's `Pets` detail experience instead of being a separate top-level destination for now.
 - Completion attribution such as who completed a task and when is not a near-term requirement unless future shared-care workflows require it.
 - Stripe subscriptions can come after the core workflows are usable.
+- V2 pricing, paywall, and AI packaging strategy is tracked in `v2-pricing-ai-strategy.md`; implementation should not start until the private-beta workflows and persistence are stable.
 - Push notifications can wait; in-app reminders are acceptable for the first version.
 - Google OAuth should be the first auth method added later.
 - Google OAuth is the first auth method. Supabase owns auth sessions, Google owns identity, and Vercel only hosts the app/domain.
@@ -251,6 +253,9 @@ This file tracks important product and technical decisions so the project does n
 - Keep the UI on mock data initially and connect real persistence screen by screen.
 - Pets are the first persistence boundary: Supabase read/write helpers map database rows into the current `Pet` UI model, and production can receive real pets while other workflows are migrated screen by screen.
 - Google sign-in establishes a real Supabase session. Local development may still use mock pet data, but production must not use mock data as the active product data.
+- Production pet/profile writes must persist across refresh and sign-in sessions; failed saves or uploads should surface an error instead of appearing successful.
+- Pets are soft-archived, not deleted. Archiving hides a pet from active Home, Calendar, and Pets workflows while preserving records, documents, measurements, and history.
+- Pet photos are private household data. Uploads are append-only in Supabase Storage, then `pets.photo_path` points to the latest photo and the UI renders a signed URL.
 - Service worker registration should run in production only during development to avoid stale local caches.
 - Keep architecture simple for a solo founder project.
 

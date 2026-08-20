@@ -41,6 +41,9 @@ export type Pet = {
   secondaryVetId?: string;
   secondaryVetRole?: string;
   trainingCues?: { id: string; cue: string; action: string }[];
+  archivedAt?: string;
+  archivedReason?: "passed-away" | "no-longer-owned" | "other";
+  archivedNotes?: string;
 };
 
 export type Task = {

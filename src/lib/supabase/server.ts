@@ -1,9 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/env";
+
 export function createSupabaseServerClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabasePublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const supabaseUrl = getSupabaseUrl();
+  const supabasePublishableKey = getSupabasePublishableKey();
 
   if (!supabaseUrl || !supabasePublishableKey) {
     throw new Error("Missing Supabase server environment variables.");

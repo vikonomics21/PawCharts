@@ -1,11 +1,12 @@
 import { PawChartApp, type PawChartDataMode, type PawChartInitialData } from "@/components/pawchart-app";
 import type { OwnerProfile } from "@/data/demo";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { hasSupabasePublicEnv } from "@/lib/supabase/env";
 import { fetchProductionWorkspace, type PawChartWorkspace } from "@/lib/supabase/workspace";
 
 export default async function Home() {
   const appMode: PawChartDataMode = process.env.NODE_ENV === "production" ? "production" : "local-demo";
-  const hasSupabaseEnv = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
+  const hasSupabaseEnv = hasSupabasePublicEnv();
 
   let authEmail: string | null = null;
   let initialData: PawChartInitialData | undefined;
@@ -35,6 +36,7 @@ export default async function Home() {
         const productionWorkspace = await fetchProductionWorkspace(supabase, user);
         ownerProfile = productionWorkspace.ownerProfile;
         initialData = {
+          archivedPets: productionWorkspace.archivedPets,
           documents: productionWorkspace.documents,
           measurements: productionWorkspace.measurements,
           pets: productionWorkspace.pets,

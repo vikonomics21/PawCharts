@@ -54,6 +54,8 @@ Set these in Vercel for the private beta:
 - `ADMIN_EMAILS` - comma-separated emails allowed to access `/support`.
 - `NEXT_PUBLIC_SITE_URL` - production site URL, such as `https://pets.vikonomics.com`.
 
+The app also accepts the temporary aliases `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `PUBLIC_SITE_URL` on the server side, but the `NEXT_PUBLIC_*` names are the canonical production names and are required anywhere browser Supabase clients are used.
+
 Never put secret keys in frontend code or committed files.
 
 ## OAuth Branding Checklist
@@ -67,6 +69,7 @@ Google OAuth currently redirects through Supabase Auth, so Google may show the S
 - `ux-patterns.md` - reusable interaction patterns for the app
 - `mvp-scope.md` - what is in scope now versus later
 - `decision.md` - concrete product and technical decisions already made
+- `v2-pricing-ai-strategy.md` - future monetization, paywall, and AI strategy notes
 
 ## Product Notes
 

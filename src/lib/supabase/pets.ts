@@ -35,6 +35,9 @@ export type PetRow = {
   primary_vet_provider_id: string | null;
   secondary_vet_provider_id: string | null;
   secondary_vet_role: string | null;
+  archived_at: string | null;
+  archived_reason: "passed-away" | "no-longer-owned" | "other" | null;
+  archived_notes: string | null;
 };
 
 export type PetTrainingCueRow = {
@@ -91,7 +94,7 @@ export type PetProfileUpdateInput = {
   secondaryVetRole?: string | null;
 };
 
-export async function fetchPetsForCurrentUser(supabase: SupabaseClient): Promise<Pet[]> {
+export async function fetchPetsForCurrentUser(supabase: SupabaseClient, options?: { archived?: boolean }): Promise<Pet[]> {
   const {
     data: { user },
     error: userError,
@@ -108,6 +111,7 @@ export async function fetchPetsForCurrentUser(supabase: SupabaseClient): Promise
   const { data, error } = await supabase
     .from("pets")
     .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
+    .filter("archived_at", options?.archived ? "not.is" : "is", null)
     .order("created_at", { ascending: true })
     .order("sort_order", { ascending: true, referencedTable: "pet_training_cues" });
 
@@ -266,6 +270,9 @@ export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | nu
     primaryVetId: row.primary_vet_provider_id ?? undefined,
     secondaryVetId: row.secondary_vet_provider_id ?? undefined,
     secondaryVetRole: row.secondary_vet_role ?? undefined,
+    archivedAt: row.archived_at ?? undefined,
+    archivedReason: row.archived_reason ?? undefined,
+    archivedNotes: row.archived_notes ?? undefined,
     trainingCues:
       row.species === "dog"
         ? (row.pet_training_cues ?? [])
