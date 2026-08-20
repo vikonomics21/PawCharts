@@ -38,6 +38,9 @@ export type PetRow = {
   archived_at: string | null;
   archived_reason: "passed-away" | "no-longer-owned" | "other" | null;
   archived_notes: string | null;
+  deleted_at: string | null;
+  deleted_reason: string | null;
+  deleted_notes: string | null;
 };
 
 export type PetTrainingCueRow = {
@@ -112,6 +115,7 @@ export async function fetchPetsForCurrentUser(supabase: SupabaseClient, options?
     .from("pets")
     .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
     .filter("archived_at", options?.archived ? "not.is" : "is", null)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true })
     .order("sort_order", { ascending: true, referencedTable: "pet_training_cues" });
 
@@ -273,6 +277,9 @@ export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | nu
     archivedAt: row.archived_at ?? undefined,
     archivedReason: row.archived_reason ?? undefined,
     archivedNotes: row.archived_notes ?? undefined,
+    deletedAt: row.deleted_at ?? undefined,
+    deletedReason: row.deleted_reason ?? undefined,
+    deletedNotes: row.deleted_notes ?? undefined,
     trainingCues:
       row.species === "dog"
         ? (row.pet_training_cues ?? [])

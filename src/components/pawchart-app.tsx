@@ -43,6 +43,7 @@ import {
   createProductionVetProvider,
   createProductionMeasurementSnapshot,
   createProductionDocumentSignedUrl,
+  deleteProductionPet,
   updateProductionOwnerProfile,
   updateProductionPet,
   updateProductionPetCareTeam,
@@ -97,8 +98,11 @@ type ModalState =
   | { title: string; type: "global-add" }
   | { title: string; type: "add-pet" }
   | { title: string; type: "edit-pet"; pet: Pet; section: PetEditSection }
-  | { title: string; type: "archive-pet"; pet: Pet }
-  | { title: string; type: "archived-pets" }
+  | { title: string; type: "edit-profiles" }
+  | { title: string; type: "archive-pet"; pet: Pet; returnToEditProfiles?: boolean }
+  | { title: string; type: "archived-pet-detail"; pet: Pet }
+  | { title: string; type: "confirm-delete-pet"; pet: Pet }
+  | { title: string; type: "confirm-restore-pet"; pet: Pet }
   | { title: string; type: "add-observation"; petId: string }
   | { title: string; type: "quick-care"; petId: string }
   | { title: string; type: "add-vet-note"; petId: string }
@@ -475,6 +479,7 @@ export function PawChartApp({
   initialData,
   initialOwnerProfile,
   isAuthenticated = false,
+  productionLoadError = false,
   workspace: initialWorkspace,
 }: {
   appMode?: PawChartDataMode;
@@ -482,6 +487,7 @@ export function PawChartApp({
   initialData?: PawChartInitialData;
   initialOwnerProfile?: OwnerProfile;
   isAuthenticated?: boolean;
+  productionLoadError?: boolean;
   workspace?: PawChartWorkspace;
 }) {
   const resolvedAppMode = appMode ?? (process.env.NODE_ENV !== "production" ? "local-demo" : "production");
@@ -531,6 +537,38 @@ export function PawChartApp({
     return <ProductionSignInView />;
   }
 
+  if (resolvedAppMode === "production" && isAuthenticated && productionLoadError) {
+    return (
+      <main className="min-h-dvh bg-background px-5 py-8 text-foreground sm:px-8">
+        <section className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-xl items-center">
+          <div className="w-full rounded-lg border border-line bg-surface p-5 text-center shadow-sm sm:p-7">
+            <span className="mx-auto grid h-12 w-12 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Dog aria-hidden className="h-6 w-6" />
+            </span>
+            <h1 className="mt-4 text-2xl font-semibold text-ink">We could not load your pets</h1>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Your account is signed in, but PawChart could not load your saved pet profile. Refresh the page before adding another pet.
+            </p>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                className="min-h-11 rounded-lg bg-ink px-4 text-sm font-semibold text-white"
+                onClick={() => window.location.reload()}
+                type="button"
+              >
+                Retry
+              </button>
+              <form action={signOut}>
+                <button className="min-h-11 w-full rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink" type="submit">
+                  Sign out
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   function handleProductionError(error: unknown) {
     console.error(error);
     window.alert(error instanceof Error ? error.message : "Something went wrong while saving. Please try again.");
@@ -541,7 +579,13 @@ export function PawChartApp({
     formData.set("petId", petId);
     formData.set("photo", photoFile);
 
-    return updateProductionPetPhoto(formData);
+    const result = await updateProductionPetPhoto(formData);
+
+    if (!result.pet) {
+      throw new Error(result.error || "Pet photo could not be saved. Please try again.");
+    }
+
+    return result.pet;
   }
 
   function localPhotoUrl(file: File | null, species: PetSpecies) {
@@ -775,7 +819,7 @@ export function PawChartApp({
     );
   }
 
-  async function archivePet(pet: Pet, input: ArchivePetInput) {
+  async function archivePet(pet: Pet, input: ArchivePetInput, options?: { returnToEditProfiles?: boolean }) {
     if (!isLocalDemo) {
       try {
         const archivedPet = await archiveProductionPet({
@@ -787,7 +831,7 @@ export function PawChartApp({
         setArchivedPets((current) => [archivedPet, ...current.filter((item) => item.id !== pet.id)]);
         const nextPet = pets.find((item) => item.id !== pet.id);
         setSelectedPetId(nextPet?.id ?? "");
-        setModal(null);
+        setModal(options?.returnToEditProfiles ? { title: "Edit profiles", type: "edit-profiles" } : null);
       } catch (error) {
         handleProductionError(error);
       }
@@ -804,17 +848,17 @@ export function PawChartApp({
     setArchivedPets((current) => [archivedPet, ...current.filter((item) => item.id !== pet.id)]);
     const nextPet = pets.find((item) => item.id !== pet.id);
     setSelectedPetId(nextPet?.id ?? "");
-    setModal(null);
+    setModal(options?.returnToEditProfiles ? { title: "Edit profiles", type: "edit-profiles" } : null);
   }
 
-  async function restorePet(pet: Pet) {
+  async function restorePet(pet: Pet, options?: { returnToEditProfiles?: boolean }) {
     if (!isLocalDemo) {
       try {
         const restoredPet = await restoreProductionPet(pet.id);
         setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
         setPets((current) => [...current, restoredPet]);
         setSelectedPetId(restoredPet.id);
-        setModal(null);
+        setModal(options?.returnToEditProfiles ? { title: "Edit profiles", type: "edit-profiles" } : null);
         setActiveTab("pets");
       } catch (error) {
         handleProductionError(error);
@@ -831,8 +875,30 @@ export function PawChartApp({
     setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
     setPets((current) => [...current, restoredPet]);
     setSelectedPetId(restoredPet.id);
-    setModal(null);
+    setModal(options?.returnToEditProfiles ? { title: "Edit profiles", type: "edit-profiles" } : null);
     setActiveTab("pets");
+  }
+
+  async function deletePetProfile(pet: Pet) {
+    if (!isLocalDemo) {
+      try {
+        await deleteProductionPet({ petId: pet.id, reason: "user-requested" });
+        setPets((current) => current.filter((item) => item.id !== pet.id));
+        setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
+        const nextPet = pets.find((item) => item.id !== pet.id);
+        setSelectedPetId(nextPet?.id ?? "");
+        setModal({ title: "Edit profiles", type: "edit-profiles" });
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    setPets((current) => current.filter((item) => item.id !== pet.id));
+    setArchivedPets((current) => current.filter((item) => item.id !== pet.id));
+    const nextPet = pets.find((item) => item.id !== pet.id);
+    setSelectedPetId(nextPet?.id ?? "");
+    setModal({ title: "Edit profiles", type: "edit-profiles" });
   }
 
   function addVetPrepItem(input: { petId: string; title: string; details: string; observedOn: string }) {
@@ -2178,7 +2244,7 @@ export function PawChartApp({
     setModal({ title: "Upload file", type: "upload-document", petId });
   }
 
-  if (!onboardingDismissed && pets.length === 0) {
+  if (!onboardingDismissed && pets.length === 0 && archivedPets.length === 0) {
     return (
       <OnboardingView
         authEmail={authEmail}
@@ -2210,10 +2276,10 @@ export function PawChartApp({
               </button>
               <button
                 className="min-h-11 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink"
-                onClick={() => setModal({ title: "Archived pets", type: "archived-pets" })}
+                onClick={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
                 type="button"
               >
-                Archived pets
+                Edit profiles
               </button>
             </div>
             {isAuthenticated ? (
@@ -2227,8 +2293,46 @@ export function PawChartApp({
         </section>
         <AppModal modal={modal} onClose={() => setModal(null)}>
           {modal?.type === "add-pet" && <AddPetForm onSubmit={addPet} />}
-          {modal?.type === "archived-pets" && (
-            <ArchivedPetsList archivedPets={archivedPets} onRestore={restorePet} />
+          {modal?.type === "edit-profiles" && (
+            <EditProfilesPanel
+              archivedPets={archivedPets}
+              onArchive={(pet) => setModal({ title: `Archive ${pet.name}?`, type: "archive-pet", pet, returnToEditProfiles: true })}
+              onDelete={(pet) => setModal({ title: `Delete ${pet.name}?`, type: "confirm-delete-pet", pet })}
+              onRestore={(pet) => setModal({ title: `Restore ${pet.name}?`, type: "confirm-restore-pet", pet })}
+              onViewArchived={(pet) => setModal({ title: pet.name, type: "archived-pet-detail", pet })}
+              pets={pets}
+            />
+          )}
+          {modal?.type === "archived-pet-detail" && (
+            <ArchivedPetDetail
+              documents={documents.filter((document) => document.petId === modal.pet.id)}
+              measurements={measurements.filter((measurement) => measurement.petId === modal.pet.id)}
+              onBack={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+              pet={modal.pet}
+            />
+          )}
+          {modal?.type === "archive-pet" && (
+            <ArchivePetForm
+              onCancel={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+              onSubmit={(input) => void archivePet(modal.pet, input, { returnToEditProfiles: modal.returnToEditProfiles })}
+              pet={modal.pet}
+            />
+          )}
+          {modal?.type === "confirm-delete-pet" && (
+            <ConfirmDeleteForm
+              body="Delete this pet profile? Records and documents stay preserved internally during beta, but this pet will no longer appear in the app."
+              confirmLabel="Delete profile"
+              onCancel={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+              onConfirm={() => void deletePetProfile(modal.pet)}
+            />
+          )}
+          {modal?.type === "confirm-restore-pet" && (
+            <ConfirmDeleteForm
+              body={`Restore ${modal.pet.name} to active pet profiles? They will appear in Home, Calendar, and Pets again.`}
+              confirmLabel="Restore pet"
+              onCancel={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+              onConfirm={() => void restorePet(modal.pet, { returnToEditProfiles: true })}
+            />
           )}
         </AppModal>
       </main>
@@ -2327,10 +2431,8 @@ export function PawChartApp({
                   dismissVetPrepItem={dismissVetPrepItem}
                   markVetPrepAddressed={markVetPrepAddressed}
                   measurements={measurements.filter((measurement) => measurement.petId === selectedPet.id)}
-                  archivedPetCount={archivedPets.length}
                   onAddPet={() => setModal({ title: "Add pet", type: "add-pet" })}
                   onAddVetNote={() => setModal({ title: "Add vet note", type: "add-vet-note", petId: selectedPet.id })}
-                  onArchivePet={() => setModal({ title: `Archive ${selectedPet.name}?`, type: "archive-pet", pet: selectedPet })}
                   onChangeVet={() => setModal({ title: "Manage care team", type: "change-vet", pet: selectedPet })}
                   onEditPet={(section) =>
                     setModal({
@@ -2350,7 +2452,7 @@ export function PawChartApp({
                     })
                   }
                   onManageSharing={() => setModal({ title: "Sharing and access", type: "sharing-access", pet: selectedPet })}
-                  onOpenArchivedPets={() => setModal({ title: "Archived pets", type: "archived-pets" })}
+                  onEditProfiles={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
                   onPhotoChange={changePetPhoto}
                   onViewTrainingCues={() => setModal({ title: "Training cues", type: "training-cues", pet: selectedPet })}
                   onViewMeasurements={() => setModal({ title: "Measurements", type: "pet-measurements", petId: selectedPet.id })}
@@ -2432,12 +2534,43 @@ export function PawChartApp({
         {modal?.type === "archive-pet" && (
           <ArchivePetForm
             onCancel={() => setModal(null)}
-            onSubmit={(input) => void archivePet(modal.pet, input)}
+            onSubmit={(input) => void archivePet(modal.pet, input, { returnToEditProfiles: modal.returnToEditProfiles })}
             pet={modal.pet}
           />
         )}
-        {modal?.type === "archived-pets" && (
-          <ArchivedPetsList archivedPets={archivedPets} onRestore={restorePet} />
+        {modal?.type === "edit-profiles" && (
+          <EditProfilesPanel
+            archivedPets={archivedPets}
+            onArchive={(pet) => setModal({ title: `Archive ${pet.name}?`, type: "archive-pet", pet, returnToEditProfiles: true })}
+            onDelete={(pet) => setModal({ title: `Delete ${pet.name}?`, type: "confirm-delete-pet", pet })}
+            onRestore={(pet) => setModal({ title: `Restore ${pet.name}?`, type: "confirm-restore-pet", pet })}
+            onViewArchived={(pet) => setModal({ title: pet.name, type: "archived-pet-detail", pet })}
+            pets={pets}
+          />
+        )}
+        {modal?.type === "archived-pet-detail" && (
+          <ArchivedPetDetail
+            documents={documents.filter((document) => document.petId === modal.pet.id)}
+            measurements={measurements.filter((measurement) => measurement.petId === modal.pet.id)}
+            onBack={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+            pet={modal.pet}
+          />
+        )}
+        {modal?.type === "confirm-delete-pet" && (
+          <ConfirmDeleteForm
+            body="Delete this pet profile? Records and documents stay preserved internally during beta, but this pet will no longer appear in the app."
+            confirmLabel="Delete profile"
+            onCancel={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+            onConfirm={() => void deletePetProfile(modal.pet)}
+          />
+        )}
+        {modal?.type === "confirm-restore-pet" && (
+          <ConfirmDeleteForm
+            body={`Restore ${modal.pet.name} to active pet profiles? They will appear in Home, Calendar, and Pets again.`}
+            confirmLabel="Restore pet"
+            onCancel={() => setModal({ title: "Edit profiles", type: "edit-profiles" })}
+            onConfirm={() => void restorePet(modal.pet, { returnToEditProfiles: true })}
+          />
         )}
         {modal?.type === "add-vet-note" && (
           <VetPrepItemForm onSubmit={(input) => addVetPrepItem({ ...input, petId: modal.petId })} />
@@ -4579,18 +4712,16 @@ function ManageScheduleList({
 }
 
 function PetsView({
-  archivedPetCount,
   carryVetPrepItem,
   dismissVetPrepItem,
   markVetPrepAddressed,
   measurements,
   onAddPet,
   onAddVetNote,
-  onArchivePet,
   onChangeVet,
   onEditPet,
+  onEditProfiles,
   onManageSharing,
-  onOpenArchivedPets,
   onPhotoChange,
   onViewTrainingCues,
   onViewMeasurements,
@@ -4603,18 +4734,16 @@ function PetsView({
   vetProviders,
   vetPrepItems,
 }: {
-  archivedPetCount: number;
   carryVetPrepItem: (itemId: string) => void;
   dismissVetPrepItem: (itemId: string) => void;
   markVetPrepAddressed: (itemId: string) => void;
   measurements: MeasurementSnapshot[];
   onAddPet: () => void;
   onAddVetNote: () => void;
-  onArchivePet: () => void;
   onChangeVet: () => void;
   onEditPet: (section: PetEditSection) => void;
+  onEditProfiles: () => void;
   onManageSharing: () => void;
-  onOpenArchivedPets: () => void;
   onPhotoChange: (petId: string, file: File | null) => void;
   onViewTrainingCues: () => void;
   onViewMeasurements: () => void;
@@ -4634,32 +4763,19 @@ function PetsView({
 
   return (
     <div className="space-y-6">
+      <div className="flex min-h-10 items-center justify-end">
+        <button className="text-sm font-semibold text-primary underline-offset-4 hover:underline" onClick={onEditProfiles} type="button">
+          Edit profiles
+        </button>
+      </div>
       <PetSwitcher
         actionLabel="Add pet"
         onAction={onAddPet}
         pets={pets}
         selectedPetId={selectedPetId}
         setSelectedPetId={setSelectedPetId}
+        showTitle={false}
       />
-
-      <div className="flex flex-wrap justify-end gap-2">
-        {archivedPetCount > 0 ? (
-          <button
-            className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink"
-            onClick={onOpenArchivedPets}
-            type="button"
-          >
-            Archived pets ({archivedPetCount})
-          </button>
-        ) : null}
-        <button
-          className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-muted"
-          onClick={onArchivePet}
-          type="button"
-        >
-          Archive pet
-        </button>
-      </div>
 
       <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <article className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
@@ -5350,14 +5466,16 @@ function PetSwitcher({
   pets,
   selectedPetId,
   setSelectedPetId,
+  showTitle = true,
 }: {
   actionLabel?: string;
   onAction?: () => void;
   pets: Pet[];
   selectedPetId: string;
   setSelectedPetId: (petId: string) => void;
+  showTitle?: boolean;
 }) {
-  if (pets.length <= 1) {
+  if (pets.length <= 1 && showTitle) {
     if (!onAction) return null;
 
     return (
@@ -5376,7 +5494,7 @@ function PetSwitcher({
 
   return (
     <section className="space-y-3">
-      <SectionTitle title="Pets" />
+      {showTitle ? <SectionTitle title="Pets" /> : null}
       <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 sm:-mx-8 sm:px-8 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0">
         {pets.map((pet) => {
           const selected = pet.id === selectedPetId;
@@ -5514,43 +5632,173 @@ function ArchivePetForm({
   );
 }
 
-function ArchivedPetsList({
+function EditProfilesPanel({
   archivedPets,
+  onArchive,
+  onDelete,
   onRestore,
+  onViewArchived,
+  pets,
 }: {
   archivedPets: Pet[];
+  onArchive: (pet: Pet) => void;
+  onDelete: (pet: Pet) => void;
   onRestore: (pet: Pet) => void;
+  onViewArchived: (pet: Pet) => void;
+  pets: Pet[];
 }) {
-  if (archivedPets.length === 0) {
-    return (
-      <div className="rounded-lg bg-background p-4 text-sm leading-6 text-muted">
-        No archived pets yet.
+  return (
+    <div className="space-y-5">
+      <p className="rounded-lg bg-background px-3 py-2 text-sm leading-6 text-muted">
+        Archive hides a pet from daily care but keeps it restorable. Delete removes the profile from the app and is not shown again.
+      </p>
+
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Active profiles</p>
+        {pets.length === 0 ? (
+          <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">No active pet profiles.</p>
+        ) : (
+          pets.map((pet) => (
+            <PetProfileManagerRow
+              actions={
+                <>
+                  <button className="min-h-10 px-2 text-sm font-semibold text-muted" onClick={() => onArchive(pet)} type="button">
+                    Archive
+                  </button>
+                  <button className="min-h-10 px-2 text-sm font-semibold text-red-600" onClick={() => onDelete(pet)} type="button">
+                    Delete
+                  </button>
+                </>
+              }
+              key={pet.id}
+              pet={pet}
+            />
+          ))
+        )}
       </div>
-    );
-  }
+
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Archived profiles</p>
+        {archivedPets.length === 0 ? (
+          <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">No archived pet profiles.</p>
+        ) : (
+          archivedPets.map((pet) => (
+            <PetProfileManagerRow
+              actions={
+                <>
+                  <button className="min-h-10 px-2 text-sm font-semibold text-primary" onClick={() => onViewArchived(pet)} type="button">
+                    View
+                  </button>
+                  <button className="min-h-10 px-2 text-sm font-semibold text-primary" onClick={() => onRestore(pet)} type="button">
+                    Restore
+                  </button>
+                </>
+              }
+              key={pet.id}
+              meta={`${archiveReasonLabel(pet.archivedReason)}${pet.archivedAt ? ` - ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}` : ""}`}
+              pet={pet}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PetProfileManagerRow({
+  actions,
+  meta,
+  pet,
+}: {
+  actions: React.ReactNode;
+  meta?: string;
+  pet: Pet;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-line bg-white p-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <PetAvatar pet={pet} size="xs" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-ink">{pet.name}</p>
+          <p className="truncate text-xs capitalize text-muted">{meta ?? pet.species}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">{actions}</div>
+    </div>
+  );
+}
+
+function ArchivedPetDetail({
+  documents,
+  measurements,
+  onBack,
+  pet,
+}: {
+  documents: RecordDocument[];
+  measurements: MeasurementSnapshot[];
+  onBack: () => void;
+  pet: Pet;
+}) {
+  const latestMeasurement = measurements[0];
 
   return (
-    <div className="space-y-2">
-      {archivedPets.map((pet) => (
-        <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-line bg-white p-3" key={pet.id}>
-          <div className="flex min-w-0 items-center gap-3">
-            <PetAvatar pet={pet} size="xs" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{pet.name}</p>
-              <p className="truncate text-xs text-muted">
-                {archiveReasonLabel(pet.archivedReason)}{pet.archivedAt ? ` - ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}` : ""}
-              </p>
-            </div>
+    <div className="space-y-4">
+      <button className="inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-primary" onClick={onBack} type="button">
+        <ArrowLeft aria-hidden className="h-4 w-4" />
+        Back
+      </button>
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+        <div className="relative h-44">
+          <Image alt={`${pet.name}, ${pet.breed}`} className="h-full w-full object-cover" fill sizes="(max-width: 640px) 100vw, 480px" src={pet.photo} />
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4 text-white">
+            <p className="text-sm capitalize text-white/80">{pet.species}</p>
+            <h2 className="truncate text-3xl font-semibold leading-none">{pet.name}</h2>
           </div>
-          <button
-            className="min-h-10 shrink-0 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-primary"
-            onClick={() => onRestore(pet)}
-            type="button"
-          >
-            Restore
-          </button>
         </div>
-      ))}
+        <div className="space-y-4 p-4">
+          <div className="grid grid-cols-2 gap-2">
+            <FactRow label="Breed" value={pet.breed} />
+            <FactRow label="Age" value={pet.ageLabel} />
+            <FactRow label="Weight" value={pet.weight} />
+            <FactRow label="Sex" value={capitalize(pet.sex)} />
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Archived</p>
+            <p className="mt-1 text-sm text-ink">
+              {archiveReasonLabel(pet.archivedReason)}{pet.archivedAt ? ` - ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}` : ""}
+            </p>
+            {pet.archivedNotes ? <p className="mt-2 text-sm leading-6 text-muted">{pet.archivedNotes}</p> : null}
+          </div>
+        </div>
+      </div>
+
+      <ProfileSection title="Background">
+        <BackgroundDetails background={pet.background} />
+      </ProfileSection>
+
+      <ProfileSection title="Measurements">
+        {latestMeasurement ? (
+          <div className="rounded-lg bg-background p-3">
+            <p className="text-sm font-semibold text-ink">{measurementSnapshotSummary(latestMeasurement)}</p>
+            <p className="mt-1 text-xs text-muted">{latestMeasurement.createdLabel}</p>
+            <MeasurementValueGrid measurement={latestMeasurement} />
+          </div>
+        ) : (
+          <p className="rounded-lg bg-background px-3 py-2 text-sm text-muted">No measurements saved.</p>
+        )}
+      </ProfileSection>
+
+      <ProfileSection title="Documents">
+        <DocumentList compact documents={documents} emptyText="No documents saved for this pet." />
+      </ProfileSection>
+
+      <ProfileSection title="Notes">
+        <div className="space-y-3 text-sm leading-6 text-muted">
+          <p>{pet.behaviorNotes || "No behavior notes saved."}</p>
+          <p>{pet.careNotes || "No care notes saved."}</p>
+          <p>{pet.medicalNotes || "No medical notes saved."}</p>
+        </div>
+      </ProfileSection>
     </div>
   );
 }

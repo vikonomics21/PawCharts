@@ -44,6 +44,9 @@ export type Pet = {
   archivedAt?: string;
   archivedReason?: "passed-away" | "no-longer-owned" | "other";
   archivedNotes?: string;
+  deletedAt?: string;
+  deletedReason?: string;
+  deletedNotes?: string;
 };
 
 export type Task = {

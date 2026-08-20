@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { DocumentRecordType, MeasurementSnapshot, OwnerProfile, Pet, PetSpecies, RecordDocument, VetProvider } from "@/data/demo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -39,6 +40,10 @@ export type AddPetActionInput = {
 
 export type VetProviderActionInput = Omit<VetProvider, "householdId" | "id">;
 
+export type PetPhotoUploadResult =
+  | { error?: never; pet: Pet }
+  | { error: string; pet?: never };
+
 type HouseholdMembershipRow = {
   id: string;
   household_id: string;
@@ -75,6 +80,25 @@ export async function completeProductionOnboarding(input: ProductionOnboardingIn
   const membership =
     existingMembership ??
     (await createOwnerMembershipForUser(household.id, user.id));
+
+  const existingPet = await fetchFirstActivePetForHousehold(admin, household.id);
+  if (existingPet) {
+    revalidatePath("/");
+
+    return {
+      ownerProfile,
+      pet: existingPet,
+      vetProviders: await fetchVetProvidersForHousehold(admin, household.id),
+      workspace: {
+        household,
+        householdMembership: {
+          id: membership.id,
+          householdId: membership.household_id,
+          role: membership.role,
+        },
+      },
+    };
+  }
 
   const pet = await insertPet(admin, {
     ageLabel: input.ageLabel,
@@ -182,63 +206,73 @@ export async function updateProductionPet(input: Pet): Promise<Pet> {
   return pet ?? (await mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow));
 }
 
-export async function updateProductionPetPhoto(formData: FormData): Promise<Pet> {
-  const { supabase } = await requireCurrentUser();
-  const petId = String(formData.get("petId") || "");
-  const photo = formData.get("photo");
+export async function updateProductionPetPhoto(formData: FormData): Promise<PetPhotoUploadResult> {
+  try {
+    const { supabase } = await requireCurrentUser();
+    const admin = createSupabaseAdminClient();
+    const petId = String(formData.get("petId") || "");
+    const photo = formData.get("photo");
 
-  if (!petId) {
-    throw new Error("Missing pet for photo upload.");
+    if (!petId) {
+      return { error: "Missing pet for photo upload." };
+    }
+
+    if (!(photo instanceof File) || photo.size === 0) {
+      return { error: "Choose a pet photo to upload." };
+    }
+
+    validatePetPhoto(photo);
+
+    const { data: petRow, error: petError } = await supabase
+      .from("pets")
+      .select("id, household_id")
+      .eq("id", petId)
+      .single();
+
+    if (petError || !petRow) {
+      return { error: "You do not have access to update this pet photo." };
+    }
+
+    const path = buildPetPhotoPath(petRow.household_id, petRow.id, photo);
+    const { error: uploadError } = await admin.storage.from(PET_PHOTO_BUCKET).upload(path, photo, {
+      cacheControl: "3600",
+      contentType: photo.type,
+      upsert: false,
+    });
+
+    if (uploadError) {
+      console.error("Pet photo upload failed.", uploadError);
+      return { error: "Pet photo could not be uploaded. Please try another JPG, PNG, or WebP under 5 MB." };
+    }
+
+    const { error: updateError } = await admin
+      .from("pets")
+      .update({
+        photo_path: path,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", petId);
+
+    if (updateError) {
+      console.error("Pet photo path update failed.", updateError);
+      return { error: "Pet photo uploaded, but PawChart could not save it to the profile." };
+    }
+
+    const pet = await fetchPetById(petId);
+
+    if (!pet) {
+      return { error: "Pet photo uploaded, but the pet could not be reloaded." };
+    }
+
+    revalidatePath("/");
+
+    return { pet };
+  } catch (error) {
+    console.error("Pet photo update failed.", error);
+    return {
+      error: error instanceof Error ? error.message : "Pet photo could not be saved. Please try again.",
+    };
   }
-
-  if (!(photo instanceof File) || photo.size === 0) {
-    throw new Error("Choose a pet photo to upload.");
-  }
-
-  validatePetPhoto(photo);
-
-  const { data: petRow, error: petError } = await supabase
-    .from("pets")
-    .select("id, household_id")
-    .eq("id", petId)
-    .single();
-
-  if (petError) {
-    throw petError;
-  }
-
-  const path = buildPetPhotoPath(petRow.household_id, petRow.id, photo);
-  const { error: uploadError } = await supabase.storage.from(PET_PHOTO_BUCKET).upload(path, photo, {
-    cacheControl: "3600",
-    contentType: photo.type,
-    upsert: false,
-  });
-
-  if (uploadError) {
-    throw uploadError;
-  }
-
-  const { error: updateError } = await supabase
-    .from("pets")
-    .update({
-      photo_path: path,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", petId);
-
-  if (updateError) {
-    throw updateError;
-  }
-
-  const pet = await fetchPetById(petId);
-
-  if (!pet) {
-    throw new Error("Pet photo uploaded, but the pet could not be reloaded.");
-  }
-
-  revalidatePath("/");
-
-  return pet;
 }
 
 export async function archiveProductionPet(input: {
@@ -297,6 +331,29 @@ export async function restoreProductionPet(petId: string): Promise<Pet> {
   revalidatePath("/");
 
   return pet;
+}
+
+export async function deleteProductionPet(input: {
+  petId: string;
+  notes?: string;
+  reason?: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("pets")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_notes: input.notes?.trim() || null,
+      deleted_reason: input.reason?.trim() || "user-requested",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.petId);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
 }
 
 export async function fetchProductionPet(petId: string): Promise<Pet | null> {
@@ -894,6 +951,25 @@ async function fetchPetById(petId: string) {
     .from("pets")
     .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
     .eq("id", petId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow) : null;
+}
+
+async function fetchFirstActivePetForHousehold(supabase: SupabaseClient, householdId: string) {
+  const { data, error } = await supabase
+    .from("pets")
+    .select("*, pet_training_cues(id, pet_id, cue, action, sort_order)")
+    .eq("household_id", householdId)
+    .is("archived_at", null)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true })
+    .order("sort_order", { ascending: true, referencedTable: "pet_training_cues" })
+    .limit(1)
     .maybeSingle();
 
   if (error) {

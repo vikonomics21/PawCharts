@@ -12,6 +12,7 @@ export default async function Home() {
   let initialData: PawChartInitialData | undefined;
   let isAuthenticated = false;
   let ownerProfile: OwnerProfile | undefined;
+  let productionLoadError = false;
   let workspace: PawChartWorkspace | undefined;
 
   if (!hasSupabaseEnv) {
@@ -45,7 +46,7 @@ export default async function Home() {
         workspace = productionWorkspace.workspace;
       } catch (error) {
         console.error("Failed to load Supabase workspace for the current user.", error);
-        initialData = { pets: [] };
+        productionLoadError = true;
       }
     }
   }
@@ -57,6 +58,7 @@ export default async function Home() {
       initialData={initialData}
       initialOwnerProfile={ownerProfile}
       isAuthenticated={isAuthenticated}
+      productionLoadError={productionLoadError}
       workspace={workspace}
     />
   );
