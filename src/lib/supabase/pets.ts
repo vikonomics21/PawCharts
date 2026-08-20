@@ -5,6 +5,7 @@ import type { Pet, PetSpecies } from "@/data/demo";
 export type PetRow = {
   id: string;
   household_id: string;
+  created_at: string;
   name: string;
   species: PetSpecies;
   breed: string | null;
@@ -241,6 +242,8 @@ export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | nu
     id: row.id,
     name: row.name,
     species: row.species,
+    createdAt: row.created_at,
+    createdLabel: formatCreatedLabel(row.created_at),
     breed: row.breed ?? "Unknown breed",
     sex: row.sex === "female" ? "female" : "male",
     photo: signedPhotoUrl ?? defaultPhotoForSpecies(row.species),
@@ -308,6 +311,17 @@ function formatAgeLabel(row: PetRow) {
 
 function formatWeight(value: number | null, unit: string) {
   return value === null ? "Not logged" : `${Number(value).toLocaleString("en-US")} ${unit || "lb"}`;
+}
+
+function formatCreatedLabel(value: string | null) {
+  if (!value) return undefined;
+
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
 }
 
 function defaultPhotoForSpecies(species: PetSpecies) {

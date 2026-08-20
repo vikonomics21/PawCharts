@@ -13,6 +13,8 @@ export type Pet = {
   id: string;
   name: string;
   species: PetSpecies;
+  createdAt?: string;
+  createdLabel?: string;
   breed: string;
   sex: "male" | "female";
   photo: string;
@@ -276,6 +278,8 @@ export const demoPets: Pet[] = [
     id: "oliver",
     name: "Oliver",
     species: "dog",
+    createdAt: "2026-05-15T00:00:00.000Z",
+    createdLabel: "May 15, 2026",
     breed: "Mini Goldendoodle",
     sex: "male",
     photo:
@@ -328,6 +332,8 @@ export const demoPets: Pet[] = [
     id: "luna",
     name: "Luna",
     species: "cat",
+    createdAt: "2026-05-18T00:00:00.000Z",
+    createdLabel: "May 18, 2026",
     breed: "Domestic shorthair",
     sex: "female",
     photo:

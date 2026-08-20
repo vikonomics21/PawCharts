@@ -4763,19 +4763,21 @@ function PetsView({
 
   return (
     <div className="space-y-6">
-      <div className="flex min-h-10 items-center justify-end">
-        <button className="text-sm font-semibold text-primary underline-offset-4 hover:underline" onClick={onEditProfiles} type="button">
-          Edit profiles
-        </button>
+      <div className="space-y-2">
+        <div className="flex items-center justify-end">
+          <button className="min-h-8 text-sm font-semibold text-primary underline-offset-4 hover:underline" onClick={onEditProfiles} type="button">
+            Edit profiles
+          </button>
+        </div>
+        <PetSwitcher
+          actionLabel="Add pet"
+          onAction={onAddPet}
+          pets={pets}
+          selectedPetId={selectedPetId}
+          setSelectedPetId={setSelectedPetId}
+          showTitle={false}
+        />
       </div>
-      <PetSwitcher
-        actionLabel="Add pet"
-        onAction={onAddPet}
-        pets={pets}
-        selectedPetId={selectedPetId}
-        setSelectedPetId={setSelectedPetId}
-        showTitle={false}
-      />
 
       <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <article className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
@@ -5671,6 +5673,7 @@ function EditProfilesPanel({
                 </>
               }
               key={pet.id}
+              meta={pet.createdLabel ? `Added ${pet.createdLabel}` : undefined}
               pet={pet}
             />
           ))
@@ -5695,7 +5698,7 @@ function EditProfilesPanel({
                 </>
               }
               key={pet.id}
-              meta={`${archiveReasonLabel(pet.archivedReason)}${pet.archivedAt ? ` - ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}` : ""}`}
+              meta={archivedPetProfileMeta(pet)}
               pet={pet}
             />
           ))
@@ -9195,6 +9198,15 @@ function archiveReasonLabel(reason: Pet["archivedReason"]) {
   if (reason === "passed-away") return "Passed away";
   if (reason === "no-longer-owned") return "No longer in my care";
   return "Archived";
+}
+
+function archivedPetProfileMeta(pet: Pet) {
+  const added = pet.createdLabel ? `Added ${pet.createdLabel}` : "";
+  const archived = pet.archivedAt
+    ? `Archived ${formatDateForDisplay(pet.archivedAt.slice(0, 10))}${pet.archivedReason ? ` (${archiveReasonLabel(pet.archivedReason)})` : ""}`
+    : archiveReasonLabel(pet.archivedReason);
+
+  return [added, archived].filter(Boolean).join(" · ") || pet.species;
 }
 
 function isDefaultPetPhoto(value: string) {
