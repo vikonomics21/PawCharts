@@ -56,6 +56,10 @@ Set these in Vercel for the private beta:
 
 Never put secret keys in frontend code or committed files.
 
+## OAuth Branding Checklist
+
+Google OAuth currently redirects through Supabase Auth, so Google may show the Supabase project domain during consent. For a fully branded production flow, add a Supabase custom Auth domain such as `auth.vikonomics.com`, then add `https://auth.vikonomics.com/auth/v1/callback` to the Google OAuth client. Keep the existing Supabase callback during the transition. Also confirm Google Auth Platform branding uses `PawChart`, the PawChart logo, a support email, and the authorized domain `vikonomics.com`.
+
 ## Project Memory
 
 - `symbolic-space.md` - why PawChart should feel and behave a certain way
@@ -70,4 +74,4 @@ Never put secret keys in frontend code or committed files.
 - Custom care events are supported in the data model but are not default UI clutter.
 - Public share links are designed to stay active until revoked.
 - Documents are designed to be manually attached to share links for safer UX.
-- Google OAuth will be added after the core product workflow is easier to test.
+- Google OAuth is the current private-beta sign-in method through Supabase Auth.

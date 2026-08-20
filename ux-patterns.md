@@ -16,8 +16,11 @@ This file documents reusable interaction patterns for PawChart so screens stay c
 - Mobile should include a prominent floating `Add` action for quick capture.
 - Desktop should remain fully functional and can use wider layouts, but should not introduce a separate product model.
 - Existing records content should be reframed into `Health` and `Calendar` without duplicating underlying records.
+- Home setup checklists should be compact and action-oriented. Each row should explain the next useful setup step briefly and navigate directly to the resolving tab, section, or modal.
+- Upload-assisted onboarding can be offered, but AI-extracted values should never be written automatically; owners must review and confirm suggested fields before saving.
 - Health should use visible sections instead of a horizontally scrolling records tab control.
 - Health shortcuts should be visible in a compact 3-by-2 grid when six destinations are present.
+- Health shortcuts should look and behave like tappable icon buttons, with a short label and a clear visual target for each destination.
 - Health shortcut taps should scroll sections into a useful reading position near the top of the viewport.
 - Calendar should show pet-specific date-based activity first, using existing logs and due items before introducing complex calendar behavior.
 - Calendar should use the week strip and selected-day detail for date scanning, with the same compact done/log-date controls used on Home.

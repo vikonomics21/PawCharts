@@ -52,6 +52,8 @@ This file tracks important product and technical decisions so the project does n
 - The global `Add` action is a core navigation affordance, not a secondary utility.
 - Home greeting is owner-level and should use the current owner profile when available, not a pet name.
 - Owner profile starts as mock state and should later map to the authenticated user profile.
+- Home owns lightweight setup guidance. New or incomplete users should see a compact `Get started` checklist that navigates directly to the page or modal that resolves each missing setup item.
+- Manual setup remains the private-beta default. Uploaded records can help onboarding now, but AI parsing should remain later and must use a confirm-before-saving review step.
 
 ## MVP Scope
 
@@ -73,6 +75,7 @@ This file tracks important product and technical decisions so the project does n
 - Google OAuth should be the first auth method added later.
 - Google OAuth is the first auth method. Supabase owns auth sessions, Google owns identity, and Vercel only hosts the app/domain.
 - Auth callbacks use `/auth/callback`, with production URL `https://pets.vikonomics.com/auth/callback` and local URL `http://localhost:3004/auth/callback`.
+- Google OAuth consent may show the Supabase project domain while Auth runs through the default Supabase URL. A fully branded OAuth flow requires a Supabase custom Auth domain such as `auth.vikonomics.com`, plus the matching Google OAuth callback `https://auth.vikonomics.com/auth/v1/callback` and Google Auth Platform branding for PawChart.
 - Email magic links may be added later for household members who do not use Google.
 
 ## Pet Profiles

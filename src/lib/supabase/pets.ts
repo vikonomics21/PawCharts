@@ -49,6 +49,9 @@ type PetWithCuesRow = PetRow & {
   pet_training_cues?: PetTrainingCueRow[];
 };
 
+export const PET_PHOTO_BUCKET = "pet-photos";
+const PET_PHOTO_SIGNED_URL_TTL_SECONDS = 60 * 60;
+
 export type PetCreateInput = {
   householdId: string;
   name: string;
@@ -112,7 +115,7 @@ export async function fetchPetsForCurrentUser(supabase: SupabaseClient): Promise
     throw error;
   }
 
-  return (data ?? []).map((row) => mapPetRowToPet(row as PetWithCuesRow));
+  return Promise.all((data ?? []).map((row) => mapPetRowToPetWithSignedPhoto(supabase, row as PetWithCuesRow)));
 }
 
 export async function createPetProfile(supabase: SupabaseClient, input: PetCreateInput): Promise<Pet> {
@@ -136,7 +139,7 @@ export async function createPetProfile(supabase: SupabaseClient, input: PetCreat
     throw error;
   }
 
-  return mapPetRowToPet(data as PetWithCuesRow);
+  return mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow);
 }
 
 export async function updatePetProfile(supabase: SupabaseClient, input: PetProfileUpdateInput): Promise<Pet> {
@@ -175,7 +178,7 @@ export async function updatePetProfile(supabase: SupabaseClient, input: PetProfi
     throw error;
   }
 
-  return mapPetRowToPet(data as PetWithCuesRow);
+  return mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow);
 }
 
 export async function replacePetTrainingCues(
@@ -207,14 +210,32 @@ export async function replacePetTrainingCues(
   }
 }
 
-export function mapPetRowToPet(row: PetWithCuesRow): Pet {
+export async function mapPetRowToPetWithSignedPhoto(supabase: SupabaseClient, row: PetWithCuesRow): Promise<Pet> {
+  const signedPhotoUrl = row.photo_path ? await createPetPhotoSignedUrl(supabase, row.photo_path) : null;
+  return mapPetRowToPet(row, signedPhotoUrl);
+}
+
+export async function createPetPhotoSignedUrl(supabase: SupabaseClient, photoPath: string): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from(PET_PHOTO_BUCKET)
+    .createSignedUrl(photoPath, PET_PHOTO_SIGNED_URL_TTL_SECONDS);
+
+  if (error) {
+    console.error("Failed to create signed pet photo URL.", error);
+    return null;
+  }
+
+  return data.signedUrl;
+}
+
+export function mapPetRowToPet(row: PetWithCuesRow, signedPhotoUrl?: string | null): Pet {
   return {
     id: row.id,
     name: row.name,
     species: row.species,
     breed: row.breed ?? "Unknown breed",
     sex: row.sex === "female" ? "female" : "male",
-    photo: row.photo_path ?? defaultPhotoForSpecies(row.species),
+    photo: signedPhotoUrl ?? defaultPhotoForSpecies(row.species),
     ageLabel: formatAgeLabel(row),
     ageEstimated: row.age_is_estimated,
     weight: formatWeight(row.weight_value, row.weight_unit),

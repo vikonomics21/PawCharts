@@ -43,6 +43,7 @@ import {
   updateProductionOwnerProfile,
   updateProductionPet,
   updateProductionPetCareTeam,
+  updateProductionPetPhoto,
   updateProductionVetProvider,
 } from "@/app/pawchart-production-actions";
 import {
@@ -188,6 +189,15 @@ type KitUnifiedItem = KitChecklistItem & {
   status?: KitDocumentLink["status"];
 };
 
+type HomeGetStartedItem = {
+  id: string;
+  icon: typeof Home;
+  onClick: () => void;
+  reason: string;
+  statusLabel: string;
+  title: string;
+};
+
 type OnboardingInput = {
   firstName: string;
   email: string;
@@ -198,7 +208,18 @@ type OnboardingInput = {
   ageLabel: string;
   weight: string;
   setupStyle: "simple" | "upload";
+  photoFile: File | null;
   files: FileList | null;
+};
+
+type PetFormSubmitInput = {
+  ageLabel: string;
+  behaviorNotes: string;
+  breed: string;
+  name: string;
+  photoFile: File | null;
+  species: PetSpecies;
+  weight: string;
 };
 
 type VetProviderFormInput = Omit<VetProvider, "householdId" | "id">;
@@ -450,25 +471,45 @@ export function PawChartApp({
     window.alert(error instanceof Error ? error.message : "Something went wrong while saving. Please try again.");
   }
 
+  async function uploadProductionPhotoForPet(petId: string, photoFile: File) {
+    const formData = new FormData();
+    formData.set("petId", petId);
+    formData.set("photo", photoFile);
+
+    return updateProductionPetPhoto(formData);
+  }
+
+  function localPhotoUrl(file: File | null, species: PetSpecies) {
+    return file
+      ? URL.createObjectURL(file)
+      : species === "dog"
+        ? "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=640&q=80"
+        : "https://images.unsplash.com/photo-1574158622682-e40e69881006?auto=format&fit=crop&w=640&q=80";
+  }
+
   function openRecordsForPet(petId: string) {
     setSelectedPetId(petId);
     setActiveTab("records");
     setShowNotifications(false);
   }
 
-  async function addPet(input: {
-    name: string;
-    species: PetSpecies;
-    breed: string;
-    ageLabel: string;
-    weight: string;
-    behaviorNotes: string;
-  }) {
+  async function addPet(input: PetFormSubmitInput) {
     if (!isLocalDemo) {
       try {
-        const pet = await createProductionPet(input);
-        setPets((current) => [...current, pet]);
-        setSelectedPetId(pet.id);
+        const { photoFile, ...petInput } = input;
+        const pet = await createProductionPet(petInput);
+        let savedPet = pet;
+
+        if (photoFile) {
+          try {
+            savedPet = await uploadProductionPhotoForPet(pet.id, photoFile);
+          } catch (error) {
+            handleProductionError(error);
+          }
+        }
+
+        setPets((current) => [...current, savedPet]);
+        setSelectedPetId(savedPet.id);
         setActiveTab("pets");
         setModal(null);
       } catch (error) {
@@ -483,10 +524,7 @@ export function PawChartApp({
       species: input.species,
       breed: input.breed || "Unknown breed",
       sex: "male",
-      photo:
-        input.species === "dog"
-          ? "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=640&q=80"
-          : "https://images.unsplash.com/photo-1574158622682-e40e69881006?auto=format&fit=crop&w=640&q=80",
+      photo: localPhotoUrl(input.photoFile, input.species),
       ageLabel: input.ageLabel || "Approximate age",
       ageEstimated: true,
       weight: input.weight || "Not logged",
@@ -543,10 +581,19 @@ export function PawChartApp({
           species: input.species,
           weight: input.weight,
         });
+        let savedPet = result.pet;
+
+        if (input.photoFile) {
+          try {
+            savedPet = await uploadProductionPhotoForPet(result.pet.id, input.photoFile);
+          } catch (error) {
+            handleProductionError(error);
+          }
+        }
 
         setOwnerProfile(result.ownerProfile);
-        setPets([result.pet]);
-        setSelectedPetId(result.pet.id);
+        setPets([savedPet]);
+        setSelectedPetId(savedPet.id);
         setVetProviders(result.vetProviders);
         setWorkspace(result.workspace);
         setPetKits([]);
@@ -565,10 +612,7 @@ export function PawChartApp({
       species: input.species,
       breed: input.breed || "Unknown breed",
       sex: "male",
-      photo:
-        input.species === "dog"
-          ? "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?auto=format&fit=crop&w=640&q=80"
-          : "https://images.unsplash.com/photo-1574158622682-e40e69881006?auto=format&fit=crop&w=640&q=80",
+      photo: localPhotoUrl(input.photoFile, input.species),
       ageLabel: input.ageLabel || "Approximate age",
       ageEstimated: true,
       weight: input.weight || "Not logged",
@@ -643,11 +687,12 @@ export function PawChartApp({
     setActiveTab("home");
   }
 
-  async function updatePet(input: Pet) {
+  async function updatePet(input: Pet, photoFile?: File | null) {
     if (!isLocalDemo) {
       try {
         const pet = await updateProductionPet(input);
-        setPets((current) => current.map((currentPet) => (currentPet.id === pet.id ? pet : currentPet)));
+        const savedPet = photoFile ? await uploadProductionPhotoForPet(pet.id, photoFile) : pet;
+        setPets((current) => current.map((currentPet) => (currentPet.id === savedPet.id ? savedPet : currentPet)));
         setModal(null);
       } catch (error) {
         handleProductionError(error);
@@ -655,8 +700,27 @@ export function PawChartApp({
       return;
     }
 
-    setPets((current) => current.map((pet) => (pet.id === input.id ? input : pet)));
+    const nextPet = photoFile ? { ...input, photo: localPhotoUrl(photoFile, input.species) } : input;
+    setPets((current) => current.map((pet) => (pet.id === nextPet.id ? nextPet : pet)));
     setModal(null);
+  }
+
+  async function changePetPhoto(petId: string, photoFile: File | null) {
+    if (!photoFile) return;
+
+    if (!isLocalDemo) {
+      try {
+        const pet = await uploadProductionPhotoForPet(petId, photoFile);
+        setPets((current) => current.map((currentPet) => (currentPet.id === pet.id ? pet : currentPet)));
+      } catch (error) {
+        handleProductionError(error);
+      }
+      return;
+    }
+
+    setPets((current) =>
+      current.map((pet) => (pet.id === petId ? { ...pet, photo: localPhotoUrl(photoFile, pet.species) } : pet)),
+    );
   }
 
   function addVetPrepItem(input: { petId: string; title: string; details: string; observedOn: string }) {
@@ -1775,6 +1839,51 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
     setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: item.tripId, allPets: true });
   }
 
+  function openHealthSectionForPet(petId: string, sectionId: string) {
+    setSelectedPetId(petId);
+    setActiveTab("records");
+    setShowNotifications(false);
+    setModal(null);
+    window.setTimeout(() => scrollToSection(sectionId), 80);
+  }
+
+  function openPetProfileSetup(petId: string) {
+    const pet = pets.find((item) => item.id === petId) ?? selectedPet;
+    setSelectedPetId(pet.id);
+    setActiveTab("pets");
+    setShowNotifications(false);
+    setModal({ title: `Edit ${pet.name}'s profile`, type: "edit-pet", pet, section: "profile" });
+  }
+
+  function openPrimaryVetSetup(petId: string) {
+    const pet = pets.find((item) => item.id === petId) ?? selectedPet;
+    setSelectedPetId(pet.id);
+    setActiveTab("pets");
+    setShowNotifications(false);
+    setModal({ title: "Manage care team", type: "change-vet", pet });
+  }
+
+  function openRoutineSetup(petId: string) {
+    setSelectedPetId(petId);
+    setActiveTab("calendar");
+    setShowNotifications(false);
+    setModal({ title: "Add care routine", type: "schedule-care", petId });
+  }
+
+  function openMedicationSetup(petId: string) {
+    setSelectedPetId(petId);
+    setActiveTab("records");
+    setShowNotifications(false);
+    setModal({ title: "Add medication", type: "medication", petId });
+  }
+
+  function openRecordUploadSetup(petId: string) {
+    setSelectedPetId(petId);
+    setActiveTab("records");
+    setShowNotifications(false);
+    setModal({ title: "Upload file", type: "upload-document", petId });
+  }
+
   if (!onboardingDismissed && pets.length === 0) {
     return (
       <OnboardingView
@@ -1818,8 +1927,10 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
             <div className="mx-auto w-full max-w-6xl">
               {activeTab === "home" && (
                 <HomeView
+                  documents={documents}
                   lastUndo={lastUndo}
                   logs={logs}
+                  onAddMedicationSetup={openMedicationSetup}
                   onLogForDate={handleTaskBackdate}
                   onCreateKit={() =>
                     setModal({ title: "Create list", type: "create-kit", petId: selectedPet.id, templateId: "template-blank" })
@@ -1831,6 +1942,11 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
                     setModal({ title: "Lists & kits", type: "lists-kits", pet, kitId: kit.id, allPets: true });
                   }}
                   onOpenKitPrep={openKitPrep}
+                  onOpenPetProfileSetup={openPetProfileSetup}
+                  onOpenPrimaryVetSetup={openPrimaryVetSetup}
+                  onOpenRecordUploadSetup={openRecordUploadSetup}
+                  onOpenRoutineSetup={openRoutineSetup}
+                  onOpenVaccineSetup={(petId) => openHealthSectionForPet(petId, "health-vaccines")}
                   onToggleKitItem={toggleKitChecklistItem}
                   onViewAllKits={() => setModal({ title: "Lists & kits", type: "lists-kits", pet: selectedPet, allPets: true })}
                   onPrimary={handleTaskPrimary}
@@ -1892,6 +2008,7 @@ function uploadKitItemDocument(tripId: string, itemId: string, files: FileList |
                     })
                   }
                   onManageSharing={() => setModal({ title: "Sharing and access", type: "sharing-access", pet: selectedPet })}
+                  onPhotoChange={changePetPhoto}
                   onViewTrainingCues={() => setModal({ title: "Training cues", type: "training-cues", pet: selectedPet })}
                   onViewMeasurements={() => setModal({ title: "Measurements", type: "pet-measurements", petId: selectedPet.id })}
                   petAccessMembers={petAccessMembers.filter((member) => member.petId === selectedPet.id)}
@@ -2426,6 +2543,7 @@ function OnboardingView({
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             const recordInput = event.currentTarget.elements.namedItem("records") as HTMLInputElement | null;
+            const photoInput = event.currentTarget.elements.namedItem("petPhoto") as HTMLInputElement | null;
             onSubmit({
               ageLabel: String(form.get("ageLabel") || ""),
               breed: String(form.get("breed") || ""),
@@ -2434,6 +2552,7 @@ function OnboardingView({
               files: recordInput?.files ?? null,
               firstName: String(form.get("firstName") || ""),
               petName: String(form.get("petName") || ""),
+              photoFile: photoInput?.files?.[0] ?? null,
               setupStyle: String(form.get("setupStyle") || "simple") as OnboardingInput["setupStyle"],
               species: String(form.get("species") || "dog") as PetSpecies,
               weight: String(form.get("weight") || ""),
@@ -2455,6 +2574,8 @@ function OnboardingView({
               <FormField label="Breed" name="breed" />
               <FormField label="Weight" name="weight" placeholder="28 lb" />
             </section>
+
+            <PhotoFileField label="Pet photo" name="petPhoto" />
 
             <section className="grid gap-3 sm:grid-cols-2">
               <label className="rounded-lg border border-line bg-background p-3">
@@ -2816,13 +2937,20 @@ function NotificationPanel({
 }
 
 function HomeView({
+  documents,
   lastUndo,
   logs,
+  onAddMedicationSetup,
   onCreateKit,
   onLogForDate,
   onOpenAttentionTask,
   onOpenKit,
   onOpenKitPrep,
+  onOpenPetProfileSetup,
+  onOpenPrimaryVetSetup,
+  onOpenRecordUploadSetup,
+  onOpenRoutineSetup,
+  onOpenVaccineSetup,
   onToggleKitItem,
   onViewAllKits,
   onPrimary,
@@ -2834,13 +2962,20 @@ function HomeView({
   petKits,
   vaccines,
 }: {
+  documents: RecordDocument[];
   lastUndo: LogEntry | null;
   logs: LogEntry[];
+  onAddMedicationSetup: (petId: string) => void;
   onCreateKit: () => void;
   onLogForDate: (task: Task) => void;
   onOpenAttentionTask: (task: Task) => void;
   onOpenKit: (kit: PetKit) => void;
   onOpenKitPrep: (item: KitPrepItem) => void;
+  onOpenPetProfileSetup: (petId: string) => void;
+  onOpenPrimaryVetSetup: (petId: string) => void;
+  onOpenRecordUploadSetup: (petId: string) => void;
+  onOpenRoutineSetup: (petId: string) => void;
+  onOpenVaccineSetup: (petId: string) => void;
   onToggleKitItem: (kitId: string, itemId: string) => void;
   onViewAllKits: () => void;
   onPrimary: (task: Task) => void;
@@ -2872,6 +3007,20 @@ function HomeView({
         : duePets.length > 1
           ? `${dueTodayTasks.length} items are due today across your pets.`
           : `${duePets[0]?.name ?? "Your pet"} has ${dueTodayTasks.length} ${dueTodayTasks.length === 1 ? "item" : "items"} due today.`;
+  const getStartedItems = getHomeGetStartedItems({
+    documents,
+    onAddMedicationSetup,
+    onCreateKit,
+    onOpenPetProfileSetup,
+    onOpenPrimaryVetSetup,
+    onOpenRecordUploadSetup,
+    onOpenRoutineSetup,
+    onOpenVaccineSetup,
+    petKits,
+    pets,
+    scheduledTasks,
+    vaccines,
+  });
 
   return (
     <div className="space-y-6">
@@ -2884,6 +3033,8 @@ function HomeView({
           <p className="mt-2 text-sm leading-6 text-muted">{homeSummary}</p>
         </div>
       </section>
+
+      {getStartedItems.length > 0 ? <HomeGetStartedChecklist items={getStartedItems} /> : null}
 
       {lastUndo ? (
         <div className="flex items-center gap-3 rounded-lg border border-line bg-surface p-4">
@@ -2972,6 +3123,172 @@ function HomeView({
       />
     </div>
   );
+}
+
+function HomeGetStartedChecklist({ items }: { items: HomeGetStartedItem[] }) {
+  const [isHidden, setIsHidden] = useState(false);
+
+  if (isHidden) return null;
+
+  return (
+    <section className="space-y-3">
+      <div className="flex min-h-11 items-center justify-between gap-3">
+        <SectionTitle title="Get started" />
+        <button
+          className="min-h-10 rounded-lg px-3 text-sm font-semibold text-muted transition hover:text-ink"
+          onClick={() => setIsHidden(true)}
+          type="button"
+        >
+          Hide
+        </button>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+        <div className="divide-y divide-line">
+          {items.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <button
+                className="flex min-h-[72px] w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-background active:scale-[0.995]"
+                key={item.id}
+                onClick={item.onClick}
+                type="button"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Icon aria-hidden className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-ink">{item.title}</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted">{item.reason}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-background px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                  {item.statusLabel}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function getHomeGetStartedItems({
+  documents,
+  onAddMedicationSetup,
+  onCreateKit,
+  onOpenPetProfileSetup,
+  onOpenPrimaryVetSetup,
+  onOpenRecordUploadSetup,
+  onOpenRoutineSetup,
+  onOpenVaccineSetup,
+  petKits,
+  pets,
+  scheduledTasks,
+  vaccines,
+}: {
+  documents: RecordDocument[];
+  onAddMedicationSetup: (petId: string) => void;
+  onCreateKit: () => void;
+  onOpenPetProfileSetup: (petId: string) => void;
+  onOpenPrimaryVetSetup: (petId: string) => void;
+  onOpenRecordUploadSetup: (petId: string) => void;
+  onOpenRoutineSetup: (petId: string) => void;
+  onOpenVaccineSetup: (petId: string) => void;
+  petKits: PetKit[];
+  pets: Pet[];
+  scheduledTasks: Task[];
+  vaccines: VaccineRecord[];
+}) {
+  const firstPet = pets[0];
+  if (!firstPet) return [];
+
+  const petWithoutPhoto = pets.find((pet) => isDefaultPetPhoto(pet.photo)) ?? firstPet;
+  const petWithoutVaccines = pets.find((pet) => !vaccines.some((vaccine) => vaccine.petId === pet.id)) ?? firstPet;
+  const petWithoutVet = pets.find((pet) => !pet.primaryVetId) ?? firstPet;
+  const petWithoutRoutine = pets.find((pet) => !scheduledTasks.some((task) => task.petId === pet.id)) ?? firstPet;
+  const petWithoutDocuments = pets.find((pet) => !documents.some((document) => document.petId === pet.id)) ?? firstPet;
+  const hasMedicationSetup = scheduledTasks.some((task) => task.type === "medication" || task.type === "refill");
+  const items: HomeGetStartedItem[] = [];
+
+  if (petWithoutPhoto && isDefaultPetPhoto(petWithoutPhoto.photo)) {
+    items.push({
+      id: "pet-photo",
+      icon: Upload,
+      onClick: () => onOpenPetProfileSetup(petWithoutPhoto.id),
+      reason: "Make the profile recognizable for care handoffs.",
+      statusLabel: "Missing",
+      title: `Add ${petWithoutPhoto.name}'s photo`,
+    });
+  }
+
+  if (petWithoutVaccines && !vaccines.some((vaccine) => vaccine.petId === petWithoutVaccines.id)) {
+    items.push({
+      id: "vaccines",
+      icon: ShieldCheck,
+      onClick: () => onOpenVaccineSetup(petWithoutVaccines.id),
+      reason: "Useful for boarding, travel, groomers, and vet handoffs.",
+      statusLabel: "Setup",
+      title: "Add vaccine records",
+    });
+  }
+
+  if (petWithoutVet && !petWithoutVet.primaryVetId) {
+    items.push({
+      id: "primary-vet",
+      icon: HeartPulse,
+      onClick: () => onOpenPrimaryVetSetup(petWithoutVet.id),
+      reason: "Connect visits, follow-ups, and care-team context.",
+      statusLabel: "Missing",
+      title: "Add a primary vet",
+    });
+  }
+
+  if (petWithoutRoutine && !scheduledTasks.some((task) => task.petId === petWithoutRoutine.id)) {
+    items.push({
+      id: "care-routine",
+      icon: CalendarCheck,
+      onClick: () => onOpenRoutineSetup(petWithoutRoutine.id),
+      reason: "Set recurring meds, baths, refills, or checkups.",
+      statusLabel: "Setup",
+      title: "Create the first care routine",
+    });
+  }
+
+  if (!hasMedicationSetup) {
+    items.push({
+      id: "medication",
+      icon: Pill,
+      onClick: () => onAddMedicationSetup(firstPet.id),
+      reason: "Optional, for active prescriptions or preventives.",
+      statusLabel: "Optional",
+      title: "Add medication if needed",
+    });
+  }
+
+  if (petWithoutDocuments && !documents.some((document) => document.petId === petWithoutDocuments.id)) {
+    items.push({
+      id: "important-records",
+      icon: FileText,
+      onClick: () => onOpenRecordUploadSetup(petWithoutDocuments.id),
+      reason: "Upload PDFs/images now. AI extraction comes later with review before saving.",
+      statusLabel: "Upload",
+      title: "Upload important records",
+    });
+  }
+
+  if (petKits.length === 0) {
+    items.push({
+      id: "list-kit",
+      icon: ClipboardList,
+      onClick: onCreateKit,
+      reason: "Build packing, travel, boarding, or custom prep lists.",
+      statusLabel: "Optional",
+      title: "Create a list or kit",
+    });
+  }
+
+  return items.slice(0, 7);
 }
 
 function HomeListsKitsSection({
@@ -3957,6 +4274,7 @@ function PetsView({
   onChangeVet,
   onEditPet,
   onManageSharing,
+  onPhotoChange,
   onViewTrainingCues,
   onViewMeasurements,
   petAccessMembers,
@@ -3977,6 +4295,7 @@ function PetsView({
   onChangeVet: () => void;
   onEditPet: (section: PetEditSection) => void;
   onManageSharing: () => void;
+  onPhotoChange: (petId: string, file: File | null) => void;
   onViewTrainingCues: () => void;
   onViewMeasurements: () => void;
   petAccessMembers: PetAccessMember[];
@@ -4015,6 +4334,19 @@ function PetsView({
               sizes="(max-width: 1024px) 100vw, 360px"
               src={selectedPet.photo}
             />
+            <label className="absolute right-3 top-3 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-full bg-white/95 px-3 text-xs font-semibold text-ink shadow-sm transition hover:bg-white">
+              <Upload aria-hidden className="h-4 w-4" />
+              {isDefaultPetPhoto(selectedPet.photo) ? "Upload photo" : "Change photo"}
+              <input
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                onChange={(event) => {
+                  onPhotoChange(selectedPet.id, event.currentTarget.files?.[0] ?? null);
+                  event.currentTarget.value = "";
+                }}
+                type="file"
+              />
+            </label>
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4 text-white">
               <div className="flex items-end justify-between gap-3">
                 <div className="min-w-0">
@@ -4761,19 +5093,13 @@ function AppModal({ children, modal, onClose }: { children: React.ReactNode; mod
 function AddPetForm({
   onSubmit,
 }: {
-  onSubmit: (input: {
-    name: string;
-    species: PetSpecies;
-    breed: string;
-    ageLabel: string;
-    weight: string;
-    behaviorNotes: string;
-  }) => void;
+  onSubmit: (input: PetFormSubmitInput) => void;
 }) {
   return (
     <form className="space-y-4" onSubmit={(event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
+      const photoInput = event.currentTarget.elements.namedItem("petPhoto") as HTMLInputElement | null;
       onSubmit({
         name: String(form.get("name") || ""),
         species: String(form.get("species") || "dog") as PetSpecies,
@@ -4781,6 +5107,7 @@ function AddPetForm({
         ageLabel: String(form.get("ageLabel") || ""),
         weight: String(form.get("weight") || ""),
         behaviorNotes: String(form.get("behaviorNotes") || ""),
+        photoFile: photoInput?.files?.[0] ?? null,
       });
     }}>
       <FormField label="Pet name" name="name" placeholder="Milo" required />
@@ -4794,6 +5121,7 @@ function AddPetForm({
       <FormField label="Breed" name="breed" placeholder="Domestic shorthair" />
       <FormField label="Age" name="ageLabel" placeholder="About 4 years" />
       <FormField label="Weight" name="weight" placeholder="22 lb" />
+      <PhotoFileField label="Pet photo" name="petPhoto" />
       <TextAreaField label="Behavior notes" name="behaviorNotes" placeholder="Temperament, triggers, leash behavior, routines" />
       <SubmitButton label="Add pet" />
     </form>
@@ -4805,7 +5133,7 @@ function EditPetSectionForm({
   pet,
   section,
 }: {
-  onSubmit: (pet: Pet) => void;
+  onSubmit: (pet: Pet, photoFile?: File | null) => void;
   pet: Pet;
   section: PetEditSection;
 }) {
@@ -4857,11 +5185,13 @@ function EditPetSectionForm({
       if (section === "behavior") next.behaviorNotes = String(form.get("behaviorNotes") || "");
       if (section === "care") next.careNotes = String(form.get("careNotes") || "");
       if (section === "medical") next.medicalNotes = String(form.get("medicalNotes") || "");
-      onSubmit(next);
+      const photoInput = event.currentTarget.elements.namedItem("petPhoto") as HTMLInputElement | null;
+      onSubmit(next, section === "profile" ? (photoInput?.files?.[0] ?? null) : null);
     }}>
       {section === "profile" ? (
         <>
           <FormField defaultValue={pet.name} label="Pet name" name="name" required />
+          <PhotoFileField label="Change photo" name="petPhoto" />
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField defaultValue={pet.breed} label="Breed" name="breed" />
             <FormField defaultValue={pet.ageLabel} label="Age" name="ageLabel" />
@@ -6770,30 +7100,37 @@ function VetSpendSummary({
 
 function HealthShortcutStrip({ onViewDocuments }: { onViewDocuments: () => void }) {
   const shortcuts = [
-    { label: "Vaccines", onClick: () => scrollToSection("health-vaccines") },
-    { label: "Meds", onClick: () => scrollToSection("health-meds") },
-    { label: "Vet care", onClick: () => scrollToSection("health-vet-care") },
-    { label: "Observations", onClick: () => scrollToSection("health-observations") },
-    { label: "Documents", onClick: onViewDocuments },
-    { label: "History", onClick: () => scrollToSection("health-history") },
+    { icon: ShieldCheck, label: "Vaccines", onClick: () => scrollToSection("health-vaccines") },
+    { icon: Pill, label: "Meds", onClick: () => scrollToSection("health-meds") },
+    { icon: HeartPulse, label: "Vet care", onClick: () => scrollToSection("health-vet-care") },
+    { icon: Eye, label: "Observations", onClick: () => scrollToSection("health-observations") },
+    { icon: FileText, label: "Documents", onClick: onViewDocuments },
+    { icon: CalendarCheck, label: "History", onClick: () => scrollToSection("health-history") },
   ];
 
   return (
     <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-line bg-surface">
-      {shortcuts.map((shortcut, index) => (
-        <button
-          className={cn(
-            "min-h-11 min-w-0 px-2 text-xs font-semibold text-ink transition hover:bg-background active:scale-[0.99] sm:text-sm",
-            index % 3 !== 0 ? "border-l border-line" : "",
-            index > 2 ? "border-t border-line" : "",
-          )}
-          key={shortcut.label}
-          onClick={shortcut.onClick}
-          type="button"
-        >
-          {shortcut.label}
-        </button>
-      ))}
+      {shortcuts.map((shortcut, index) => {
+        const Icon = shortcut.icon;
+
+        return (
+          <button
+            className={cn(
+              "flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 px-2 py-3 text-center text-xs font-semibold text-ink transition hover:bg-background active:scale-[0.99] sm:text-sm",
+              index % 3 !== 0 ? "border-l border-line" : "",
+              index > 2 ? "border-t border-line" : "",
+            )}
+            key={shortcut.label}
+            onClick={shortcut.onClick}
+            type="button"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Icon aria-hidden className="h-5 w-5" />
+            </span>
+            <span className="truncate">{shortcut.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -7062,6 +7399,36 @@ function FileField({ label, name }: { label: string; name: string }) {
         type="file"
       />
       <span className="mt-2 block text-xs font-medium text-muted">Private by default. AI extraction comes later after upload storage exists.</span>
+    </label>
+  );
+}
+
+function PhotoFileField({ label, name }: { label: string; name: string }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  return (
+    <label className="block text-sm font-semibold text-ink">
+      {label}
+      <div className="mt-2 grid gap-3 rounded-lg border border-line bg-background p-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+        <div
+          aria-hidden
+          className="h-24 w-24 rounded-lg border border-line bg-white bg-cover bg-center"
+          style={previewUrl ? { backgroundImage: `url(${previewUrl})` } : undefined}
+        />
+        <div className="min-w-0">
+          <input
+            accept="image/jpeg,image/png,image/webp"
+            className="block w-full rounded-lg border border-line bg-white px-3 py-3 text-sm font-medium text-ink file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-primary"
+            name={name}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              setPreviewUrl(file ? URL.createObjectURL(file) : null);
+            }}
+            type="file"
+          />
+          <span className="mt-2 block text-xs font-medium text-muted">JPG, PNG, or WebP. 5 MB max.</span>
+        </div>
+      </div>
     </label>
   );
 }
@@ -7927,6 +8294,10 @@ function uniqueId(base: string, existingIds: string[]) {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function isDefaultPetPhoto(value: string) {
+  return value.includes("images.unsplash.com/photo-1548199973") || value.includes("images.unsplash.com/photo-1574158622682");
 }
 
 function splitPreferenceList(value: string) {

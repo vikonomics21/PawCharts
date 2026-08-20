@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import type { OwnerProfile, Pet, PetSpecies, VetProvider } from "@/data/demo";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { mapPetRowToPet } from "@/lib/supabase/pets";
+import { PET_PHOTO_BUCKET, mapPetRowToPet, mapPetRowToPetWithSignedPhoto } from "@/lib/supabase/pets";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fetchVetProvidersForHousehold, mapVetProviderRow, type PawChartWorkspace } from "@/lib/supabase/workspace";
 
@@ -170,7 +170,66 @@ export async function updateProductionPet(input: Pet): Promise<Pet> {
 
   revalidatePath("/");
 
-  return pet ?? mapPetRowToPet(data as PetWithCuesRow);
+  return pet ?? (await mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow));
+}
+
+export async function updateProductionPetPhoto(formData: FormData): Promise<Pet> {
+  const { supabase } = await requireCurrentUser();
+  const petId = String(formData.get("petId") || "");
+  const photo = formData.get("photo");
+
+  if (!petId) {
+    throw new Error("Missing pet for photo upload.");
+  }
+
+  if (!(photo instanceof File) || photo.size === 0) {
+    throw new Error("Choose a pet photo to upload.");
+  }
+
+  validatePetPhoto(photo);
+
+  const { data: petRow, error: petError } = await supabase
+    .from("pets")
+    .select("id, household_id")
+    .eq("id", petId)
+    .single();
+
+  if (petError) {
+    throw petError;
+  }
+
+  const path = buildPetPhotoPath(petRow.household_id, petRow.id, photo);
+  const { error: uploadError } = await supabase.storage.from(PET_PHOTO_BUCKET).upload(path, photo, {
+    cacheControl: "3600",
+    contentType: photo.type,
+    upsert: false,
+  });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { error: updateError } = await supabase
+    .from("pets")
+    .update({
+      photo_path: path,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", petId);
+
+  if (updateError) {
+    throw updateError;
+  }
+
+  const pet = await fetchPetById(petId);
+
+  if (!pet) {
+    throw new Error("Pet photo uploaded, but the pet could not be reloaded.");
+  }
+
+  revalidatePath("/");
+
+  return pet;
 }
 
 export async function createProductionVetProvider(input: VetProviderActionInput): Promise<VetProvider> {
@@ -420,7 +479,31 @@ async function insertPet(
     if (pet) return pet;
   }
 
-  return mapPetRowToPet(data as PetWithCuesRow);
+  return mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow);
+}
+
+function validatePetPhoto(file: File) {
+  const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+  const maxBytes = 5 * 1024 * 1024;
+
+  if (!allowedTypes.has(file.type)) {
+    throw new Error("Pet photos must be JPG, PNG, or WebP images.");
+  }
+
+  if (file.size > maxBytes) {
+    throw new Error("Pet photos must be 5 MB or smaller.");
+  }
+}
+
+function buildPetPhotoPath(householdId: string, petId: string, file: File) {
+  const extensionByType: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  };
+  const extension = extensionByType[file.type] ?? "jpg";
+
+  return `households/${householdId}/pets/${petId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
 }
 
 async function replaceTrainingCues(petId: string, cues: { cue: string; action: string }[]) {
@@ -462,7 +545,7 @@ async function fetchPetById(petId: string) {
     throw error;
   }
 
-  return data ? mapPetRowToPet(data as PetWithCuesRow) : null;
+  return data ? mapPetRowToPetWithSignedPhoto(supabase, data as PetWithCuesRow) : null;
 }
 
 function parseAgeLabel(label: string) {

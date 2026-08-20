@@ -19,6 +19,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Care-team management that combines provider assignment with saved vet/clinic add and edit actions.
 - Manual vet bill capture with services performed, total cost, and private bill attachments.
 - Home as the cross-pet daily command center for overdue care, due-today care, upcoming attention, quick actions, and recent undo.
+- Home Get Started checklist that guides incomplete users to the next useful setup action through direct navigation.
 - Global Log action for fast mock-data capture.
 - Structured observation logging for behavior, symptoms, appetite, mobility, and other changes.
 - Calendar v1 with pet-specific selected-day activity, expandable month view, future care routines, date-prefilled routine creation, and next-four-weeks planning.
@@ -49,7 +50,7 @@ This file keeps the current build focused. It separates what belongs in the pres
 - Public share pages backed by live data.
 - Stripe subscriptions and paywall behavior.
 - Push notifications.
-- AI PDF parsing.
+- AI PDF parsing with owner review before any extracted fields are saved.
 - AI-assisted bill extraction and suggested record creation.
 - Analytics and error tracking.
 
