@@ -327,6 +327,43 @@ function formatWeightDisplay(value: string, unit: "lb" | "kg", fallback = "Not l
   return `${parsed.toLocaleString("en-US")} ${unitLabel}`;
 }
 
+function formatProviderPhone(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  const digits = trimmed.replace(/\D/g, "");
+  const normalized = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (normalized.length !== 10) return trimmed;
+  return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+}
+
+function providerPhoneHref(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/[^+\d]/g, "");
+  return normalized ? `tel:${normalized}` : "";
+}
+
+function formatProviderAddress(value?: string) {
+  const trimmed = value?.trim().replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  if (trimmed !== trimmed.toLowerCase()) return trimmed;
+  return trimmed.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function providerLinkHref(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("@") && !trimmed.startsWith("http")) return `mailto:${trimmed}`;
+  return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
+}
+
+function formatProviderLinkLabel(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("@") && !trimmed.startsWith("http")) return trimmed;
+  return trimmed.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
 const initialPetAccessMembers: PetAccessMember[] = [
   {
     id: "access-oliver-owner",
@@ -5693,7 +5730,7 @@ function AppModal({ children, modal, onClose }: { children: React.ReactNode; mod
             <X aria-hidden className="h-5 w-5" />
           </button>
         </div>
-        {children}
+        <div className="pt-2">{children}</div>
       </div>
     </div>
   );
@@ -6168,28 +6205,41 @@ function ManageCareTeamForm({
       </form>
 
       <section className="space-y-3 rounded-lg border border-line bg-background p-3">
-        <div className="flex min-h-10 items-center justify-between gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Saved vets and clinics</h3>
+        <div className="flex min-h-10 items-center justify-between gap-2">
+          <h3 className="min-w-0 text-xs font-semibold uppercase tracking-[0.1em] text-muted">Saved vets and clinics</h3>
           <button
-            className="min-h-10 rounded-lg px-2 text-sm font-semibold text-primary"
+            className="min-h-10 shrink-0 whitespace-nowrap rounded-lg px-2 text-sm font-semibold text-primary"
             onClick={onAddProvider}
             type="button"
           >
-            + Add vet or clinic
+            + Add Provider
           </button>
         </div>
         <div className="divide-y divide-line rounded-lg border border-line bg-surface px-3">
-          {providers.map((provider) => (
-            <div className="flex min-w-0 items-center gap-3 py-3" key={provider.id}>
-              <div className="min-w-0 flex-1">
-                <p className="break-words text-sm font-semibold text-ink">{provider.name}</p>
-                <p className="mt-1 break-words text-xs leading-5 text-muted">{provider.address || "No address set"}</p>
-                <p className="break-words text-xs leading-5 text-muted">{provider.phone || "No phone set"}</p>
-                <p className="break-all text-xs leading-5 text-muted">{provider.website || "No website set"}</p>
+          {providers.map((provider) => {
+            const details = [
+              formatProviderAddress(provider.address),
+              formatProviderPhone(provider.phone),
+              formatProviderLinkLabel(provider.website),
+            ].filter(Boolean);
+            return (
+              <div className="flex min-w-0 items-center gap-3 py-3" key={provider.id}>
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm font-semibold text-ink">{provider.name}</p>
+                  {details.length > 0 ? (
+                    <div className="mt-1 space-y-0.5">
+                      {details.map((detail) => (
+                        <p className="break-words text-xs leading-5 text-muted" key={detail}>{detail}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs leading-5 text-muted">No contact details yet.</p>
+                  )}
+                </div>
+                <IconButton icon={Pencil} label={`Edit ${provider.name}`} onClick={() => onEditProvider(provider)} />
               </div>
-              <IconButton icon={Pencil} label={`Edit ${provider.name}`} onClick={() => onEditProvider(provider)} />
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     </div>
@@ -7783,9 +7833,9 @@ function SharingAccessDetails({
   return (
     <div className="space-y-5">
       <section className="space-y-3">
-        <div className="flex min-h-10 items-center justify-between gap-3">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Household access</h2>
-          <button className="min-h-10 rounded-lg bg-ink px-3 text-sm font-semibold text-white" onClick={onInviteMember} type="button">
+        <div className="grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <h2 className="min-w-0 text-xs font-semibold uppercase tracking-[0.1em] text-muted">Household access</h2>
+          <button className="min-h-10 shrink-0 whitespace-nowrap rounded-lg bg-ink px-3 text-sm font-semibold text-white" onClick={onInviteMember} type="button">
             Invite member
           </button>
         </div>
@@ -7802,9 +7852,9 @@ function SharingAccessDetails({
       </section>
 
       <section className="space-y-3">
-        <div className="flex min-h-10 items-center justify-between gap-3">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">Public links</h2>
-          <button className="min-h-10 rounded-lg bg-primary px-3 text-sm font-semibold text-white" onClick={onCreateSharePacket} type="button">
+        <div className="grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <h2 className="min-w-0 text-xs font-semibold uppercase tracking-[0.1em] text-muted">Public links</h2>
+          <button className="min-h-10 shrink-0 whitespace-nowrap rounded-lg bg-primary px-3 text-sm font-semibold text-white" onClick={onCreateSharePacket} type="button">
             Create packet
           </button>
         </div>
@@ -8061,22 +8111,25 @@ function VetProviderSummary({ emptyText = "Not set", label, provider }: { emptyT
     );
   }
 
+  const phoneHref = providerPhoneHref(provider.phone);
+  const linkHref = providerLinkHref(provider.website);
+  const address = formatProviderAddress(provider.address);
+
   return (
     <div className="flex min-w-0 items-start justify-between gap-3">
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted">{label}</p>
         <h3 className="mt-1 break-words text-sm font-semibold text-ink">{provider.name}</h3>
-        <p className="mt-1 break-words text-xs leading-5 text-muted">{provider.address}</p>
-        <p className="break-words text-xs leading-5 text-muted">{provider.phone}</p>
+        {address ? <p className="mt-1 break-words text-xs leading-5 text-muted">{address}</p> : null}
       </div>
-      <div className="flex shrink-0 flex-wrap justify-end gap-1">
-        {provider.phone ? (
-          <a className="min-h-9 rounded-lg bg-white px-2 py-2 text-xs font-semibold text-primary" href={`tel:${provider.phone.replace(/[^+\d]/g, "")}`}>
+      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+        {phoneHref ? (
+          <a className="inline-flex min-h-11 items-center rounded-lg bg-white px-4 text-sm font-semibold text-primary" href={phoneHref}>
             Call
           </a>
         ) : null}
-        {provider.website ? (
-          <a className="min-h-9 rounded-lg bg-white px-2 py-2 text-xs font-semibold text-primary" href={provider.website.includes("@") && !provider.website.startsWith("http") ? `mailto:${provider.website}` : provider.website.startsWith("http") ? provider.website : `https://${provider.website}`} rel="noreferrer" target="_blank">
+        {linkHref ? (
+          <a className="inline-flex min-h-11 items-center rounded-lg bg-white px-4 text-sm font-semibold text-primary" href={linkHref} rel="noreferrer" target="_blank">
             Link
           </a>
         ) : null}
