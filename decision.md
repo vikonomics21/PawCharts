@@ -146,7 +146,7 @@ This file tracks important product and technical decisions so the project does n
 - Health should be a medically focused overview, not a tabbed records drawer.
 - Health should answer what medical records, proof, observations, vet visits, and history exist for the selected pet.
 - Health overview should start with compact shortcuts, not dense metrics.
-- Health shortcuts should include Vaccines, Meds, Vet care, Observations, Documents, and History in a visible 3-by-2 grid.
+- Health shortcuts should include Vaccines, Meds, Vet care, Observations, Documents, and History as independent white pill buttons with side-by-side icons and labels.
 - Health shortcut scrolling should land the relevant section near the top of the viewport, not leave the heading at the bottom.
 - Health overview sections are `Vaccines`, `Medications`, `Vet care`, `Observations`, and `Recent history`.
 - Health documents should be available through an All documents modal unless they are attached directly to a record card.

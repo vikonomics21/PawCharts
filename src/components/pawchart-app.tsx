@@ -7301,23 +7301,19 @@ function HealthShortcutStrip({ onViewDocuments }: { onViewDocuments: () => void 
   ];
 
   return (
-    <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-line bg-surface">
-      {shortcuts.map((shortcut, index) => {
+    <div className="flex flex-wrap gap-2">
+      {shortcuts.map((shortcut) => {
         const Icon = shortcut.icon;
 
         return (
           <button
-            className={cn(
-              "flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 px-2 py-3 text-center text-xs font-semibold text-ink transition hover:bg-background active:scale-[0.99] sm:text-sm",
-              index % 3 !== 0 ? "border-l border-line" : "",
-              index > 2 ? "border-t border-line" : "",
-            )}
+            className="flex min-h-11 min-w-0 items-center gap-2 rounded-full border border-line bg-white px-3 py-2 text-sm font-semibold text-ink shadow-sm transition hover:border-primary/30 hover:bg-background active:scale-[0.99]"
             key={shortcut.label}
             onClick={shortcut.onClick}
             type="button"
           >
-            <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 text-primary">
-              <Icon aria-hidden className="h-5 w-5" />
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+              <Icon aria-hidden className="h-4 w-4" />
             </span>
             <span className="truncate">{shortcut.label}</span>
           </button>
